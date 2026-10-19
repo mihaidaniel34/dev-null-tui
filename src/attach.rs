@@ -77,7 +77,7 @@ impl Attachment {
 }
 
 /// When everything pasted is paths of files that exist, as a terminal types them for dropped files, those files.
-/// Handles the shell quoting terminals use (backslash-escaped spaces, quotes) and file:// URLs.
+/// Handles the shell quoting terminals use (backslash-escaped spaces on macOS and Linux, quotes) and file:// URLs.
 pub fn pasted_paths(text: &str) -> Option<Vec<PathBuf>> {
     let mut tokens: Vec<String> = Vec::new();
     let mut current = String::new();
@@ -85,7 +85,8 @@ pub fn pasted_paths(text: &str) -> Option<Vec<PathBuf>> {
     let mut chars = text.trim().chars().peekable();
     while let Some(c) = chars.next() {
         match (quote, c) {
-            (None, '\\') => {
+            // Windows paths are made of backslashes; elsewhere a backslash escapes the next character.
+            (None, '\\') if !cfg!(windows) => {
                 if let Some(next) = chars.next() {
                     current.push(next);
                 }
@@ -200,7 +201,8 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let a = dir.join("shot one.png");
         fs::write(&a, b"x").unwrap();
-        let escaped = a.display().to_string().replace(' ', "\\ ");
+        // How the terminal types a dropped file: spaces escaped on macOS and Linux, the path quoted on Windows.
+        let escaped = if cfg!(windows) { format!("\"{}\"", a.display()) } else { a.display().to_string().replace(' ', "\\ ") };
         assert_eq!(pasted_paths(&escaped), Some(vec![a.clone()]));
         assert_eq!(pasted_paths(&format!("'{}'", a.display())), Some(vec![a.clone()]));
         assert_eq!(pasted_paths(&format!("{} {}", escaped, escaped)).map(|p| p.len()), Some(2));
