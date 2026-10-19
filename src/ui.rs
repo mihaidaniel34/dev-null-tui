@@ -1743,17 +1743,27 @@ pub const TERMINAL_SHORTCUTS: &[(&str, &[&str])] = &[
     ("Star", &["s"]),
     ("Save", &["b"]),
     ("Give a pastel de nata", &["p"]),
-    ("Follow or unfollow (on a profile)", &["f"]),
+    ("View images full size", &["v"]),
     ("Open the author's profile", &["a"]),
     ("Open in your browser", &["w"]),
+    ("Report a commit", &["!"]),
     ("Delete your commit", &["D"]),
-    ("Next tab", &["⇥"]),
+    ("Follow or unfollow", &["f"]),
+    ("Mute / block (on a profile)", &["m", "B"]),
+    ("Achievements (on a profile)", &["A"]),
+    ("Next tab or filter", &["⇥"]),
     ("Notifications", &["g", "n"]),
     ("Saved", &["g", "b"]),
     ("Top / bottom", &["g", "g"]),
     ("Refresh", &["R"]),
     ("Back", &["esc"]),
     ("Quit", &["⌃", "C"]),
+];
+
+pub const COMPOSER_SHORTCUTS: &[(&str, &[&str])] = &[
+    ("Complete an @mention", &["⇥"]),
+    ("Attach the clipboard's image", &["⌃", "V"]),
+    ("Remove the last image", &["⌃", "X"]),
 ];
 
 fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
@@ -1778,12 +1788,18 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
         Line::from(spans)
     };
     let w = inner.width as usize;
-    let roomy = inner.height as usize >= (SHORTCUTS.len() + TERMINAL_SHORTCUTS.len()) * 2 + 6;
+    let roomy = inner.height as usize >= (SHORTCUTS.len() + TERMINAL_SHORTCUTS.len()) * 2 + COMPOSER_SHORTCUTS.len() + 9;
     for (label, keys) in SHORTCUTS {
         lines.push(row(label, keys, w));
         if roomy {
             lines.push(Line::from(Span::styled("─".repeat(w), Style::default().fg(Theme::hairline()))));
         }
+    }
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled("In the composer", Theme::bold())));
+    lines.push(Line::default());
+    for (label, keys) in COMPOSER_SHORTCUTS {
+        lines.push(row(label, keys, w));
     }
     lines.push(Line::default());
     lines.push(Line::from(Span::styled("In the terminal", Theme::bold())));

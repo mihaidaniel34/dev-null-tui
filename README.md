@@ -40,6 +40,17 @@ You can revoke the device on the web under Settings → Devices.
 
 **Guest.** Set your GitHub username (`u` in Settings). The TUI builds your Following log from the public commits of the people you follow, through the public API. Guests can still commit and reply: the TUI signs with the SSH key on your GitHub account through `ssh-keygen -Y sign -n devnull-commit`, exactly like `curl -fsSL https://dev-null.sh/commit | bash`. Your SSH agent, passphrase-protected keys and hardware keys all work. When ssh-keygen needs a passphrase, the TUI steps aside so you can type it.
 
+## Around the app
+
+![A profile in kitty: the activity graph in the developer's lane color, their streak, rank and badges, and their commits](docs/profile.png)
+
+- **Profiles** show a year of activity as a contribution graph in the developer's lane color (or bars for a newer account), their streak, Unix rank and badges. `A` lists every achievement with its progress. `⇥` moves through Commits, Replies, Followers and Following.
+- **Notifications** filter by kind, as on the web: replies, mentions, quotes, stars, follows and moderation.
+- **Settings** (`g s`) picks your color from the six lanes, Automatic or any hex color, toggles pastéis mode and syncs your profile from GitHub.
+- **The composer** suggests developers as you type `@`, and `⇥` completes. A draft you close is kept, even across restarts.
+- **Code blocks** are highlighted the way the web highlights them, when you're signed in.
+- **Safety:** `m` mutes and `B` blocks someone from their profile, and `!` reports a commit to the moderators.
+
 ## Images
 
 To attach an image, drop its file onto the composer, or paste its path (a terminal pastes a dropped file as its path). `⌃V` attaches the image on your clipboard, such as a screenshot, and `⌃X` removes the last one. A commit carries up to 3 JPEG, PNG or WebP images, of up to 10 MB and 6000 pixels a side.
@@ -50,7 +61,7 @@ The signed API doesn't take images yet, so a commit with images is always signed
 
 In [kitty](https://sw.kovidgoyal.net/kitty/) and [Ghostty](https://ghostty.org), devnull shows avatars, cut round with a ring in each developer's lane color, and the images in commits. It uses the kitty graphics protocol's Unicode placeholders, so pictures scroll and redraw like text. Inside tmux, this needs `set -g allow-passthrough on`. Other terminals keep the colored dots.
 
-Set `DEVNULL_IMAGES=off` to turn pictures off, or `DEVNULL_IMAGES=on` to try them in another terminal that supports the protocol's Unicode placeholders.
+`v` opens a commit's images full size. Set `DEVNULL_IMAGES=off` to turn pictures off, or `DEVNULL_IMAGES=on` to try them in another terminal that supports the protocol's Unicode placeholders.
 
 ## From the shell
 
@@ -76,6 +87,7 @@ These match the web app:
 | `/` or `⌃K` | Go to a developer, profile link or commit link |
 | `⌃S` (or `⌃↵`) / `⌃P` | Commit / preview, in the composer |
 | `⌃V` / `⌃X` | Attach the clipboard's image / remove the last one, in the composer |
+| `⇥` | Complete an @mention, in the composer |
 | `g l` / `g e` / `g p` / `g s` | Log / trending / your profile / settings |
 | `?` | All shortcuts |
 
@@ -84,11 +96,15 @@ These are extra, terminal only:
 | | |
 |---|---|
 | `s` / `b` / `p` | Star / save / give a pastel de nata (pastéis mode) |
-| `f` | Follow or unfollow, on a profile |
+| `v` | View a commit's images full size (kitty, Ghostty) |
+| `f` | Follow or unfollow, on a profile or in a list of people |
+| `m` / `B` | Mute / block, on a profile |
+| `A` | Achievements, on a profile |
+| `!` | Report a commit |
 | `a` | Open the author's profile |
 | `w` | Open in your browser |
 | `D` | Delete your commit |
-| `⇥` / `1` `2` `3` | Switch tabs |
+| `⇥` / `1` `2` `3` | Switch tabs and filters |
 | `g n` / `g b` / `g g` / `G` | Notifications / saved / top / bottom |
 | `R` | Refresh (the log also counts new commits every minute, like the web) |
 | `esc` | Back |
