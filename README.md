@@ -93,10 +93,4 @@ Colors use the web's dark palette. On terminals without truecolor, they're mappe
 
 ## Releasing
 
-Bump `version` in `Cargo.toml`, commit, then tag and push:
-
-```bash
-git tag v0.2.0 && git push origin v0.2.0
-```
-
-The Release workflow checks that the tag matches `Cargo.toml`, builds every platform, and publishes the release with checksums and generated notes.
+Bump `version` in `Cargo.toml` and push to `main`. The Release workflow sees a version with no tag yet, builds every platform, tags the commit and publishes the release with checksums and generated notes. Pushing a `v*` tag that matches `Cargo.toml` works too.

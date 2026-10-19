@@ -1,41 +1,50 @@
 name: Release
 
-# Push a tag like v0.2.0 (matching the version in Cargo.toml) to build the binaries and publish a release.
+# Releases whatever version Cargo.toml says, once: bump it and push to main, and this builds the binaries, tags the
+# commit and publishes the release. Pushing a v* tag yourself (matching Cargo.toml) does the same.
 on:
   push:
+    branches: [main]
+    paths: [Cargo.toml, .github/workflows/release.yml]
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      tag:
-        description: An existing tag to (re)build, like v0.1.0
-        required: true
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
-  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   check:
     name: Check the version
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
-      - name: The tag matches Cargo.toml
+      - id: version
         run: |
-          version="$(grep -m1 '^version' Cargo.toml | cut -d '"' -f2)"
-          if [ "v$version" != "$TAG" ]; then
-            echo "::error::The tag is $TAG but Cargo.toml says $version."
-            exit 1
+          tag="v$(grep -m1 '^version' Cargo.toml | cut -d '"' -f2)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "$GITHUB_REF_NAME" != "$tag" ]; then
+              echo "::error::The tag is $GITHUB_REF_NAME but Cargo.toml says $tag."
+              exit 1
+            fi
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "$tag is already released."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
           fi
 
   build:
     name: Build (${{ matrix.target }})
     needs: check
+    if: needs.check.outputs.release == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -48,8 +57,6 @@ jobs:
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -88,7 +95,7 @@ jobs:
 
   release:
     name: Publish
-    needs: build
+    needs: [check, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -99,6 +106,7 @@ jobs:
         run: cd dist && cat *.sha256 > SHA256SUMS && cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG }}
+          tag_name: ${{ needs.check.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           generate_release_notes: true
           files: dist/*
