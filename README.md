@@ -2,9 +2,9 @@
 
 [/dev/null](https://dev-null.sh), the social network for developers, in your terminal.
 
-It follows the web app's layout and keyboard shortcuts: the Following, Latest and Trending logs, the commit graph rail in each developer's lane color, threads, profiles, notifications, saved commits and a composer. It's written in Rust with [ratatui](https://ratatui.rs).
+It follows the web app's layout and keyboard shortcuts: the Following, Latest and Trending logs, the commit graph rail in each developer's lane color, threads, profiles, notifications, saved commits and a composer that takes images. In kitty and Ghostty, avatars and images show up too. It's written in Rust with [ratatui](https://ratatui.rs).
 
-![devnull in a terminal: the Latest log, with a quoted commit and a reply branching off the rail](docs/screenshot.png)
+![devnull in kitty: the Latest log, with avatars, an image, a quoted commit and a reply branching off the rail](docs/screenshot.png)
 
 <sub>Demo data from a local mock server. The developers in it are made up.</sub>
 
@@ -32,21 +32,34 @@ To commit without signing in, you also need `ssh-keygen`, which ships with OpenS
 
 **Sign in (recommended).** In Settings (`g s`), press `s`. This approves the terminal as a device, the same way the mobile app signs in: the TUI makes its own ed25519 key, opens `/mobile/authorize` with a PKCE challenge, and signs every API request with that key (SSHSIG, namespace `devnull-api`). There's no password and no token. Signing in gives you every log, notifications, replies, stars, saves, pastéis, quotes and follows.
 
-When you approve the device, the page redirects your browser to a `devnull://auth/callback?code=…` link meant for the app. Copy that link and paste it into the TUI.
-- **Firefox and Safari** leave the link in the address bar.
-- **Chrome** may not show the link. If it doesn't, open DevTools → Network before you approve, then copy the `Location` header of the `authorize` request.
+When you approve the device, the page sends your browser to a `devnull://auth/callback?code=…` link meant for the mobile app. While you sign in, devnull registers itself as the handler for `devnull://`: a small hidden app on macOS, a `.desktop` entry on Linux, or a per-user registry key on Windows. Your browser asks to open "devnull sign-in". Allow it, and the TUI finishes signing in on its own. Then it removes the handler, so `devnull://` goes back to the app if you have it.
+
+If your browser doesn't ask, paste the link into the TUI instead. Firefox and Safari leave it in the address bar. In Chrome, open DevTools → Network before you approve, then copy the `Location` header of the `authorize` request.
 
 You can revoke the device on the web under Settings → Devices.
 
 **Guest.** Set your GitHub username (`u` in Settings). The TUI builds your Following log from the public commits of the people you follow, through the public API. Guests can still commit and reply: the TUI signs with the SSH key on your GitHub account through `ssh-keygen -Y sign -n devnull-commit`, exactly like `curl -fsSL https://dev-null.sh/commit | bash`. Your SSH agent, passphrase-protected keys and hardware keys all work. When ssh-keygen needs a passphrase, the TUI steps aside so you can type it.
 
+## Images
+
+To attach an image, drop its file onto the composer, or paste its path (a terminal pastes a dropped file as its path). `⌃V` attaches the image on your clipboard, such as a screenshot, and `⌃X` removes the last one. A commit carries up to 3 JPEG, PNG or WebP images, of up to 10 MB and 6000 pixels a side.
+
+The signed API doesn't take images yet, so a commit with images is always signed with the SSH key on your GitHub account, the way the `/commit` script sends them. That works signed in or not. A quote can't carry images yet.
+
+## Avatars and images in the terminal
+
+In [kitty](https://sw.kovidgoyal.net/kitty/) and [Ghostty](https://ghostty.org), devnull shows avatars, cut round with a ring in each developer's lane color, and the images in commits. It uses the kitty graphics protocol's Unicode placeholders, so pictures scroll and redraw like text. Inside tmux, this needs `set -g allow-passthrough on`. Other terminals keep the colored dots.
+
+Set `DEVNULL_IMAGES=off` to turn pictures off, or `DEVNULL_IMAGES=on` to try them in another terminal that supports the protocol's Unicode placeholders.
+
 ## From the shell
 
 ```bash
 devnull commit 'Shipped it.'
+devnull commit --image screenshot.png --reply 0be0130 'Fixed, see the screenshot.'
 ```
 
-This uses the device key if you're signed in, and your GitHub SSH key if you're not.
+A plain commit uses the device key if you're signed in, and your GitHub SSH key if you're not. With `--image` (up to 3) or `--reply` (a commit's hash or link), it always uses your GitHub SSH key.
 
 ## Keys
 
@@ -62,6 +75,7 @@ These match the web app:
 | `c` | Write a commit |
 | `/` or `⌃K` | Go to a developer, profile link or commit link |
 | `⌃S` (or `⌃↵`) / `⌃P` | Commit / preview, in the composer |
+| `⌃V` / `⌃X` | Attach the clipboard's image / remove the last one, in the composer |
 | `g l` / `g e` / `g p` / `g s` | Log / trending / your profile / settings |
 | `?` | All shortcuts |
 
@@ -88,6 +102,7 @@ The mouse wheel scrolls. Click a commit to select it, and click it again to open
 |---|---|
 | `DEVNULL_URL` | The server. Defaults to `https://dev-null.sh`. `http://localhost:8000` works for a local checkout. |
 | `DEVNULL_CONFIG_DIR` | Where `config.json` and the device key live. Defaults to `~/.config/devnull` (`~/Library/Application Support/devnull` on macOS). |
+| `DEVNULL_IMAGES` | `off` turns avatars and images off. `on` turns them on where they aren't detected. |
 
 Colors use the web's dark palette. On terminals without truecolor, they're mapped to the 256-color palette.
 

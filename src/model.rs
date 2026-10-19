@@ -35,6 +35,8 @@ pub struct User {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
     pub bio: Option<String>,
     #[serde(default)]
     pub company: Option<String>,
@@ -93,6 +95,8 @@ pub struct LinkPreview {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Image {
+    #[serde(default)]
+    pub url: Option<String>,
     #[serde(default)]
     pub width: Option<u64>,
     #[serde(default)]

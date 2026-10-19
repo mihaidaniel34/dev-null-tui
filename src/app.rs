@@ -7,7 +7,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKi
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::{Api, Log, api_error};
+use crate::attach::{self, Attachment};
 use crate::auth::{Authorization, DeviceKey};
+use crate::callback;
 use crate::config::{self, Config};
 use crate::model::*;
 use crate::system;
@@ -126,6 +128,8 @@ pub enum Msg {
     },
     SignedIn(Result<CurrentUser, String>),
     Toast(String, bool),
+    /// A picture is ready to send to the terminal, or couldn't be had.
+    Picture(crate::gfx::Key, Option<Vec<u8>>),
 }
 
 pub struct ApiFailure {
@@ -143,6 +147,7 @@ pub enum ComposeMode {
 pub struct Composer {
     pub mode: ComposeMode,
     pub text: Vec<char>,
+    pub images: Vec<Attachment>,
     pub cursor: usize,
     pub preview: bool,
     pub sending: bool,
@@ -178,12 +183,15 @@ pub enum Confirm {
 pub struct CliJob {
     pub reply_to: Option<String>,
     pub body: String,
+    pub images: Vec<Attachment>,
 }
 
 pub struct SignIn {
     pub key: Arc<DeviceKey>,
     pub authorization: Authorization,
     pub redeeming: bool,
+    /// devnull:// is ours while this is alive, so the browser can hand the link back.
+    pub handler: Option<callback::Handler>,
 }
 
 pub struct App {
@@ -196,6 +204,7 @@ pub struct App {
     pub log: Log,
     pub composer: Option<Composer>,
     pub draft: Option<Vec<char>>,
+    pub draft_images: Vec<Attachment>,
     pub input: Option<Input>,
     pub confirm: Option<Confirm>,
     pub help: bool,
@@ -223,6 +232,7 @@ impl App {
             log: Log::Latest,
             composer: None,
             draft: None,
+            draft_images: Vec::new(),
             input: None,
             confirm: None,
             help: false,
@@ -449,6 +459,7 @@ impl App {
             }
             Msg::SignedIn(result) => self.on_signed_in(result),
             Msg::Toast(message, error) => self.toast = Some((message, error, Instant::now())),
+            Msg::Picture(key, png) => crate::gfx::loaded(key, png),
         }
     }
 
@@ -486,6 +497,7 @@ impl App {
                 let mode = composer.mode.clone();
                 self.composer = None;
                 self.draft = None;
+                self.draft_images.clear();
                 self.toast(if pending {
                     "Committed. Pending review: only you can see it until it's approved."
                 } else {
@@ -517,6 +529,23 @@ impl App {
 
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
+
+        // The browser handed the sign-in link over: finish signing in without any pasting.
+        if self.sign_in.as_ref().is_some_and(|s| s.handler.is_some() && !s.redeeming)
+            && let Some(link) = callback::take()
+        {
+            let input = self.input.get_or_insert(Input {
+                kind: InputKind::SignInCode,
+                text: Vec::new(),
+                cursor: 0,
+                error: None,
+            });
+            input.text = link.chars().collect();
+            input.cursor = input.text.len();
+            input.error = None;
+            self.redeem(link);
+        }
+
         if let Some((_, error, at)) = &self.toast
             && at.elapsed() > Duration::from_secs(if *error { 8 } else { 4 })
         {
@@ -769,14 +798,15 @@ impl App {
         {
             return;
         }
-        let text = match mode {
-            ComposeMode::New => self.draft.take().unwrap_or_default(),
-            ComposeMode::Reply(_) | ComposeMode::Quote(_) => Vec::new(),
+        let (text, images) = match mode {
+            ComposeMode::New => (self.draft.take().unwrap_or_default(), std::mem::take(&mut self.draft_images)),
+            ComposeMode::Reply(_) | ComposeMode::Quote(_) => (Vec::new(), Vec::new()),
         };
         let cursor = text.len();
         self.composer = Some(Composer {
             mode,
             text,
+            images,
             cursor,
             preview: false,
             sending: false,
@@ -791,8 +821,12 @@ impl App {
             return;
         }
         let body = composer.body();
-        if body.is_empty() {
+        if body.is_empty() && composer.images.is_empty() {
             composer.error = Some("Aborting commit due to empty commit message.".into());
+            return;
+        }
+        if !composer.images.is_empty() && matches!(composer.mode, ComposeMode::Quote(_)) {
+            composer.error = Some("A quote can't carry images yet. Commit them on their own.".into());
             return;
         }
         if body.chars().count() > MAX_BODY {
@@ -808,11 +842,13 @@ impl App {
             ComposeMode::Quote(c) => (None, Some((**c).clone())),
         };
 
-        if !signed {
+        // The signed API takes no images yet, so those commits go through the GitHub SSH key, as they do signed out.
+        if !signed || !composer.images.is_empty() {
             self.busy = Some("Finding your SSH key…".into());
             self.cli_job = Some(CliJob {
                 reply_to: parent.map(|p| p.hash()),
                 body,
+                images: composer.images.clone(),
             });
             return;
         }
@@ -840,6 +876,7 @@ impl App {
                 let mode = self.composer.as_ref().map(|c| c.mode.clone());
                 self.composer = None;
                 self.draft = None;
+                self.draft_images.clear();
                 let short = message.lines().next().unwrap_or("Committed.").to_string();
                 self.toast(short);
                 if let Some(ComposeMode::Reply(parent)) = mode {
@@ -877,11 +914,15 @@ impl App {
             Err(e) => return self.error(e.to_string()),
         };
         let authorization = Authorization::new(&self.api.base, &key.fingerprint());
+        // The previous attempt's handler goes first, so this one isn't removed along with it.
+        self.sign_in = None;
+        let handler = callback::install();
         let opened = system::open(&authorization.url);
         self.sign_in = Some(SignIn {
             key,
             authorization,
             redeeming: false,
+            handler,
         });
         self.input = Some(Input {
             kind: InputKind::SignInCode,
@@ -971,6 +1012,13 @@ impl App {
                 input.cursor += 1;
             }
         } else if let Some(composer) = self.composer.as_mut() {
+            // A dropped (or pasted) image file arrives as its path: attach it rather than type it.
+            if let Some(paths) = attach::pasted_paths(&text) {
+                for path in paths {
+                    attach_to(composer, Attachment::from_path(&path));
+                }
+                return;
+            }
             for c in text.chars() {
                 composer.text.insert(composer.cursor, c);
                 composer.cursor += 1;
@@ -1300,9 +1348,10 @@ impl App {
     fn close_composer(&mut self) {
         if let Some(composer) = self.composer.take()
             && matches!(composer.mode, ComposeMode::New)
-            && !composer.body().is_empty()
+            && (!composer.body().is_empty() || !composer.images.is_empty())
         {
             self.draft = Some(composer.text);
+            self.draft_images = composer.images;
             self.toast("Draft kept. c brings it back.");
         }
         self.busy = None;
@@ -1320,6 +1369,19 @@ impl App {
             KeyCode::Char('p' | 'P') if ctrl => {
                 if let Some(c) = self.composer.as_mut() {
                     c.preview = !c.preview;
+                }
+                return;
+            }
+            KeyCode::Char('v') if ctrl && !alt => {
+                if let Some(c) = self.composer.as_mut().filter(|c| !c.sending) {
+                    attach_to(c, attach::from_clipboard());
+                }
+                return;
+            }
+            KeyCode::Char('x') if ctrl && !alt => {
+                if let Some(c) = self.composer.as_mut().filter(|c| !c.sending) {
+                    c.images.pop();
+                    c.error = None;
                 }
                 return;
             }
@@ -1406,6 +1468,19 @@ impl App {
             }
             _ => {}
         }
+    }
+}
+
+fn attach_to(composer: &mut Composer, attachment: anyhow::Result<Attachment>) {
+    match attachment {
+        Ok(_) if composer.images.len() >= attach::MAX_IMAGES => {
+            composer.error = Some(format!("A commit can carry up to {} images.", attach::MAX_IMAGES));
+        }
+        Ok(image) => {
+            composer.images.push(image);
+            composer.error = None;
+        }
+        Err(e) => composer.error = Some(e.to_string()),
     }
 }
 

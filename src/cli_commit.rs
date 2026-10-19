@@ -7,11 +7,14 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, anyhow, bail};
+use reqwest::multipart::Part;
 
 use crate::api::Api;
+use crate::attach::Attachment;
 use crate::auth::random_hex;
 
 pub const NAMESPACE: &str = "devnull-commit";
+pub const IMAGES_NAMESPACE: &str = "devnull-commit-images";
 
 pub struct SigningKey {
     /// What to pass to `ssh-keygen -f`: the public key when the agent holds it, otherwise the private key file.
@@ -158,29 +161,31 @@ fn create_private_dir(path: &PathBuf) -> Result<()> {
     fs::create_dir(path).context("Could not create a private temporary directory.")
 }
 
-/// "<unix timestamp>\n<nonce>\n<commit to reply to, or empty>\n<body>"
-pub fn payload(reply_to: Option<&str>, body: &str) -> String {
-    format!(
-        "{}\n{}\n{}\n{}",
-        chrono::Utc::now().timestamp(),
-        random_hex(16),
-        reply_to.unwrap_or(""),
-        body
-    )
+/// "<unix timestamp>\n<nonce>\n<commit to reply to, or empty>\n<body>". With images, the comma-separated SHA-256 of
+/// each goes on its own line before the body, so the signature covers them too.
+pub fn payload(reply_to: Option<&str>, body: &str, images: &[Attachment]) -> String {
+    let head = format!("{}\n{}\n{}", chrono::Utc::now().timestamp(), random_hex(16), reply_to.unwrap_or(""));
+    if images.is_empty() {
+        return format!("{head}\n{body}");
+    }
+    let hashes: Vec<String> = images.iter().map(Attachment::sha256).collect();
+    format!("{head}\n{}\n{body}", hashes.join(","))
 }
 
 /// Runs `ssh-keygen -Y sign`. Blocks, and may prompt for a passphrase when `needs_terminal`: ssh-keygen asks on
 /// /dev/tty, so its chatter on stderr can still be kept for when it fails.
-pub fn sign(key: &SigningKey, payload: &str) -> Result<String> {
+pub fn sign(key: &SigningKey, payload: &str, with_images: bool) -> Result<String> {
     let file = key.tmp_dir.join("commit");
     let _ = fs::remove_file(key.tmp_dir.join("commit.sig"));
     fs::write(&file, payload)?;
 
     let output = Command::new("ssh-keygen")
-        .args(["-Y", "sign", "-n", NAMESPACE, "-f"])
+        .args(["-Y", "sign", "-n", if with_images { IMAGES_NAMESPACE } else { NAMESPACE }, "-f"])
         .arg(&key.path)
         .arg(&file)
-        .stdin(Stdio::null())
+        // With DISPLAY set and stdin not a terminal, ssh-keygen asks through ssh-askpass instead, which often isn't
+        // installed, so a key that may need its passphrase gets the terminal.
+        .stdin(if key.needs_terminal { Stdio::inherit() } else { Stdio::null() })
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .output()
@@ -200,17 +205,28 @@ pub fn sign(key: &SigningKey, payload: &str) -> Result<String> {
 }
 
 /// Sends the signed commit, and answers with what /dev/null said ("Committed: <link>").
-pub async fn send(api: &Api, payload: String, signature: String) -> Result<String> {
-    let response = api
+pub async fn send(api: &Api, payload: String, signature: String, images: &[Attachment]) -> Result<String> {
+    let request = api
         .http()
         .post(format!("{}/api/cli/commits", api.base))
-        .header("Content-Type", "text/plain; charset=utf-8")
         .header("Accept", "application/json")
-        .header("X-SSH-Signature", signature)
-        .body(payload)
-        .send()
-        .await
-        .map_err(|_| anyhow!("Could not reach {}.", api.base))?;
+        .header("X-SSH-Signature", signature);
+
+    // With images, the payload goes as a file next to them, as the script sends it.
+    let request = if images.is_empty() {
+        request.header("Content-Type", "text/plain; charset=utf-8").body(payload)
+    } else {
+        let mut form = reqwest::multipart::Form::new().part("payload", Part::bytes(payload.into_bytes()).file_name("commit"));
+        for (i, image) in images.iter().enumerate() {
+            let part = Part::bytes(image.bytes.clone())
+                .file_name(format!("image-{}", i + 1))
+                .mime_str(image.mime)?;
+            form = form.part("images[]", part);
+        }
+        request.timeout(std::time::Duration::from_secs(600)).multipart(form)
+    };
+
+    let response = request.send().await.map_err(|_| anyhow!("Could not reach {}.", api.base))?;
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
     if !status.is_success() {

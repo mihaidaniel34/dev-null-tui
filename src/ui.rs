@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 use crate::api::Log;
 use crate::app::*;
 use crate::config;
+use crate::gfx;
 use crate::model::*;
 use crate::text::{self, body_lines, count, day_label, relative_time, truncate, width, wrap_plain};
 use crate::theme::Theme;
@@ -34,7 +35,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     };
 
     let w = area.width;
-    let sidebar_w: u16 = if w >= 100 { 22 } else { 5 };
+    let sidebar_w: u16 = if w >= 100 { 25 } else { 5 };
     let right_w: u16 = if w >= 134 {
         40
     } else if w >= 124 {
@@ -185,7 +186,8 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     let bottom = area.y + area.height - 2;
     let line = match (&app.me, app.username()) {
         (Some(me), _) => Line::from(vec![
-            Span::styled(" ● ", Style::default().fg(Theme::user_lane(&me.user))),
+            Span::raw(" "),
+            small_avatar(&me.user),
             Span::styled(
                 if wide {
                     truncate(&format!("@{}", me.user.username), area.width as usize - 5)
@@ -333,7 +335,14 @@ fn draw_header(buf: &mut Buffer, app: &App, area: Rect, title: &str) -> u16 {
 /// The "What did you ship?" box at the top of the log.
 fn draw_composer_bar(buf: &mut Buffer, app: &App, area: Rect) -> u16 {
     let lane = app.me.as_ref().map(|m| Theme::user_lane(&m.user)).unwrap_or(Theme::rail());
-    buf.set_string(area.x + 2, area.y + 1, "◯", Style::default().fg(lane));
+    match app.me.as_ref().and_then(|me| avatar_row(&me.user, 2, 1, 0)) {
+        Some(avatar) => {
+            buf.set_line(area.x + 2, area.y + 1, &Line::from(avatar), 2);
+        }
+        None => {
+            buf.set_string(area.x + 2, area.y + 1, "◯", Style::default().fg(lane));
+        }
+    }
     let draft = app.draft.as_ref().map(|d| d.iter().collect::<String>());
     let (text, style) = match &draft {
         Some(d) => (truncate(d.lines().next().unwrap_or(""), area.width as usize - 20), Theme::text()),
@@ -404,6 +413,21 @@ fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile)
         ));
     }
     lines.push(Line::from(counts));
+
+    if let (Some(top), Some(bottom)) = (avatar_row(user, 4, 2, 0), avatar_row(user, 4, 2, 1))
+        && lines.len() >= 2
+    {
+        lines[0].spans.remove(0);
+        for (i, line) in lines.iter_mut().enumerate() {
+            let lead = match i {
+                0 => top.clone(),
+                1 => bottom.clone(),
+                _ => Span::raw("    "),
+            };
+            line.spans.insert(0, Span::raw(" "));
+            line.spans.insert(0, lead);
+        }
+    }
 
     let mut y = area.y + 1;
     for line in lines {
@@ -589,21 +613,97 @@ fn hairline_line(w: u16) -> Line<'static> {
     Line::from(Span::styled("─".repeat(w as usize), Style::default().fg(Theme::hairline())))
 }
 
-/// The gutter: a selection bar, the commit's node or the rail running through it, and a gap.
+fn bar(selected: bool) -> Span<'static> {
+    Span::styled(if selected { "▌" } else { " " }, Style::default().fg(Theme::primary()))
+}
+
+/// The gutter: a selection bar, the commit's node or the rail running through it, and a gap. Always five spans,
+/// two cells wider when there are avatars to make room for.
 fn gutter(selected: bool, mark: Span<'static>) -> Vec<Span<'static>> {
+    let wide = gfx::enabled();
     vec![
-        Span::styled(if selected { "▌" } else { " " }, Style::default().fg(Theme::primary())),
+        bar(selected),
         Span::raw(" "),
+        Span::raw(if wide { " " } else { "" }),
         mark,
-        Span::raw("  "),
+        Span::raw(if wide { "   " } else { "  " }),
     ]
 }
 
-const GUTTER: usize = 5;
+fn gutter_width() -> usize {
+    if gfx::enabled() { 7 } else { 5 }
+}
+
+/// Puts one row of an avatar where a line's gutter has its node or rail.
+fn with_avatar(line: Line<'static>, selected: bool, avatar: Span<'static>) -> Line<'static> {
+    let rest: Vec<Span<'static>> = line.spans.into_iter().skip(5).collect();
+    Line::from([vec![bar(selected), Span::raw(" "), avatar, Span::raw(" ")], rest].concat())
+}
+
+fn avatar_row(user: &User, cols: u16, rows: u16, row: u16) -> Option<Span<'static>> {
+    let url = user.avatar_url.as_deref().filter(|u| !u.is_empty())?;
+    gfx::row(
+        &gfx::Key {
+            url: gfx::avatar_url(url),
+            cols,
+            rows,
+            ring: Some(Theme::user_lane_hex(user)),
+        },
+        row,
+    )
+}
+
+/// A two-cell avatar and a gap, or the dot it stands in for.
+fn small_avatar(user: &User) -> Span<'static> {
+    match avatar_row(user, 2, 1, 0) {
+        Some(avatar) => Span::styled(format!("{} ", avatar.content), avatar.style),
+        None => Span::styled("● ", Style::default().fg(Theme::user_lane(user))),
+    }
+}
+
+/// A commit's images, side by side, once the terminal can show pictures.
+fn picture_lines(images: &[Image], content: usize, max_rows: u16) -> Option<Vec<Line<'static>>> {
+    if !gfx::enabled() || images.iter().all(|i| i.url.is_none()) {
+        return None;
+    }
+    let shown: Vec<&Image> = images.iter().filter(|i| i.url.is_some()).take(3).collect();
+    let n = shown.len();
+    let each = (content.saturating_sub(n - 1) / n).min(gfx::MAX_CELLS as usize) as u16;
+    let keys: Vec<gfx::Key> = shown
+        .iter()
+        .map(|image| {
+            let (cols, rows) = gfx::fit(image.width.unwrap_or(4), image.height.unwrap_or(3), each, max_rows);
+            gfx::Key {
+                url: image.url.clone().unwrap_or_default(),
+                cols,
+                rows,
+                ring: None,
+            }
+        })
+        .collect();
+    let height = keys.iter().map(|k| k.rows).max().unwrap_or(0);
+    let mut lines = Vec::new();
+    for row in 0..height {
+        let mut spans = Vec::new();
+        for (i, key) in keys.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw(" "));
+            }
+            let span = if row < key.rows {
+                gfx::row(key, row).unwrap_or_else(|| Span::styled(" ".repeat(key.cols as usize), Style::default().bg(Theme::wash())))
+            } else {
+                Span::raw(" ".repeat(key.cols as usize))
+            };
+            spans.push(span);
+        }
+        lines.push(Line::from(spans));
+    }
+    Some(lines)
+}
 
 fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: bool, pasteis: bool, rail_after: bool) -> Rendered {
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let content = w.saturating_sub(GUTTER + 2).max(10);
+    let content = w.saturating_sub(gutter_width() + 2).max(10);
 
     if commit.is_tombstone() {
         let rail = Span::styled("│", Style::default().fg(Theme::rail()));
@@ -688,6 +788,7 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
         header.push(Span::styled(hash, Theme::faint_style()));
     }
     lines.push(Line::from([gutter(selected, node), header].concat()));
+    let header_at = lines.len() - 1;
 
     let prefix = |lines: &mut Vec<Line<'static>>, body: Vec<Line<'static>>| {
         for line in body {
@@ -713,7 +814,13 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
 
     // Images, link card, quote, poll.
     let mut extras: Vec<Line<'static>> = Vec::new();
-    if let Some(images) = commit.images.as_ref().filter(|i| !i.is_empty()) {
+    let pictures = commit
+        .images
+        .as_deref()
+        .and_then(|images| picture_lines(images, content, if role == Role::Focus { 20 } else { 12 }));
+    if let Some(pictures) = pictures {
+        extras.extend(pictures);
+    } else if let Some(images) = commit.images.as_ref().filter(|i| !i.is_empty()) {
         let sizes: Vec<String> = images
             .iter()
             .map(|i| match (i.width, i.height) {
@@ -800,16 +907,21 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
     }
     prefix(&mut lines, vec![Line::from(actions)]);
 
+    // The author's avatar takes the node's place, over the header and the line below it.
+    if let (Some(top), Some(bottom)) = (avatar_row(&author, 4, 2, 0), avatar_row(&author, 4, 2, 1)) {
+        lines[header_at] = with_avatar(std::mem::take(&mut lines[header_at]), selected, top);
+        lines[header_at + 1] = with_avatar(std::mem::take(&mut lines[header_at + 1]), selected, bottom);
+    }
+
     // Replies under it, branching off the rail.
     if !replies.is_empty() {
         let total = replies.len();
         for (i, reply) in replies.iter().enumerate() {
             let last = i + 1 == total;
             let reply_author = reply.author.clone().unwrap_or_default();
-            let reply_lane = Theme::user_lane(&reply_author);
             let inner = content.saturating_sub(4);
             let mut reply_lines = vec![Line::from(vec![
-                Span::styled("● ", Style::default().fg(reply_lane)),
+                small_avatar(&reply_author),
                 Span::styled(truncate(reply_author.display_name(), inner / 2), Theme::bold()),
                 Span::styled(
                     format!(" @{} · {}", reply_author.username, relative_time(reply.created_at)),
@@ -831,8 +943,8 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
                     (_, true) => "   ",
                 };
                 let mut spans = gutter(selected, Span::raw(" "));
-                spans[2] = Span::styled(branch.chars().next().unwrap().to_string(), Style::default().fg(lane));
-                spans[3] = Span::styled(branch.chars().skip(1).collect::<String>() + " ", Style::default().fg(lane));
+                spans[3] = Span::styled(branch.chars().next().unwrap().to_string(), Style::default().fg(lane));
+                spans[4] = Span::styled(branch.chars().skip(1).collect::<String>() + " ", Style::default().fg(lane));
                 spans.extend(line.spans);
                 lines.push(Line::from(spans));
             }
@@ -892,7 +1004,7 @@ fn quote_lines(commit: &Commit, w: usize) -> Vec<Line<'static>> {
     }
     let author = commit.author.clone().unwrap_or_default();
     let mut lines = vec![Line::from(vec![
-        Span::styled("● ", Style::default().fg(Theme::user_lane(&author))),
+        small_avatar(&author),
         Span::styled(truncate(author.display_name(), w / 2), Theme::bold()),
         Span::styled(
             format!(" @{} · {}", author.username, relative_time(commit.created_at)),
@@ -983,7 +1095,7 @@ fn boxed(inner: Vec<Line<'static>>, w: usize) -> Vec<Line<'static>> {
 }
 
 fn render_notification(n: &Notification, w: usize, selected: bool) -> Rendered {
-    let content = w.saturating_sub(GUTTER + 2);
+    let content = w.saturating_sub(gutter_width() + 2);
     let (icon, color, verb) = match n.kind.as_str() {
         "starred" => ("★", Theme::star(), "starred your commit"),
         "replied" => ("↩", Theme::primary(), "replied to your commit"),
@@ -1003,6 +1115,9 @@ fn render_notification(n: &Notification, w: usize, selected: bool) -> Rendered {
         spans.push(Span::styled(verb, Theme::bold()));
     } else {
         let actor = n.actor.clone().unwrap_or_default();
+        if gfx::enabled() {
+            spans.push(small_avatar(&actor));
+        }
         spans.push(Span::styled(truncate(actor.display_name(), content / 2), Theme::bold()));
         let others = n.actors_count.unwrap_or(1).saturating_sub(1);
         if others > 0 {
@@ -1137,7 +1252,20 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
             key_chip("y"),
             Span::styled(" copies the link", Theme::dim()),
         ]));
-        lines.extend(wrap_plain("2. Your browser is then sent to a devnull:// link, meant for the app. Copy it from the address bar (or the \"Open devnull?\" prompt) and paste it here.", w, Theme::text()));
+        if sign_in.handler.is_some() {
+            lines.extend(wrap_plain(
+                "2. When your browser asks to open \"devnull sign-in\", allow it. This finishes on its own.",
+                w,
+                Theme::text(),
+            ));
+            lines.extend(wrap_plain(
+                "   Didn't ask? Copy the devnull:// link it was sent to (DevTools → Network shows it) and paste it.",
+                w,
+                Theme::dim(),
+            ));
+        } else {
+            lines.extend(wrap_plain("2. Your browser is then sent to a devnull:// link, meant for the app. Copy it from the address bar (or DevTools → Network) and paste it here.", w, Theme::text()));
+        }
         lines.push(Line::from(vec![
             Span::raw("   "),
             key_chip("v"),
@@ -1213,25 +1341,18 @@ fn draw_right(f: &mut Frame, app: &App, area: Rect) {
     match &app.me {
         Some(me) => {
             let user = &me.user;
-            buf.set_line(
-                x,
-                y,
-                &Line::from(vec![
-                    Span::styled("◉ ", Style::default().fg(Theme::user_lane(user))),
-                    Span::styled(truncate(user.display_name(), w as usize - 2), Theme::bold()),
-                ]),
-                w,
-            );
+            let (top, bottom) = match (avatar_row(user, 4, 2, 0), avatar_row(user, 4, 2, 1)) {
+                (Some(top), Some(bottom)) => (vec![top, Span::raw(" ")], vec![bottom, Span::raw(" ")]),
+                _ => (vec![Span::styled("◉ ", Style::default().fg(Theme::user_lane(user)))], vec![]),
+            };
+            let mut name = top;
+            name.push(Span::styled(truncate(user.display_name(), w as usize - 6), Theme::bold()));
+            buf.set_line(x, y, &Line::from(name), w);
             y += 1;
-            buf.set_line(
-                x,
-                y,
-                &Line::from(vec![
-                    Span::styled("● ", Style::default().fg(Theme::lane(1))),
-                    Span::styled(format!("@{}", user.username), Theme::dim()),
-                ]),
-                w,
-            );
+            let mut handle = bottom;
+            handle.push(Span::styled("● ", Style::default().fg(Theme::lane(1))));
+            handle.push(Span::styled(format!("@{}", user.username), Theme::dim()));
+            buf.set_line(x, y, &Line::from(handle), w);
             y += 2;
             let mut row: Vec<Span> = Vec::new();
             for (n, label) in [
@@ -1538,6 +1659,11 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
             "Used to build your Following log without signing in.",
             "octocat",
         ),
+        InputKind::SignInCode if app.sign_in.as_ref().is_some_and(|s| s.handler.is_some()) => (
+            "Sign in",
+            "Approve this terminal in your browser. When it asks to open \"devnull sign-in\", allow it, and you're in. If it doesn't ask, paste the devnull:// link here.",
+            "devnull://auth/callback?code=…",
+        ),
         InputKind::SignInCode => (
             "Sign in",
             "Approve this terminal in your browser. You're then sent to a devnull://auth/callback?code=… link: paste it here.",
@@ -1611,7 +1737,12 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
     let iw = w.saturating_sub(4) as usize;
     let context_lines: Vec<Line> = context.map(|c| boxed(quote_lines(c, iw.saturating_sub(4)), iw)).unwrap_or_default();
     let text_h = 8u16;
-    let h = (context_lines.len() as u16 + text_h + 7).min(area.height.saturating_sub(2));
+    let image_rows = if composer.images.is_empty() {
+        0
+    } else {
+        composer.images.len() as u16 + 1
+    };
+    let h = (context_lines.len() as u16 + text_h + image_rows + 7).min(area.height.saturating_sub(2));
     let rect = centered(area, w, h);
     let inner = modal(f, rect, &title);
     let buf = f.buffer_mut();
@@ -1692,6 +1823,27 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
     }
     y = text_area.y + text_area.height;
 
+    // Attached images, in the order they'll show.
+    if !composer.images.is_empty() {
+        y += 1;
+        for (i, image) in composer.images.iter().enumerate() {
+            if y >= inner.y + inner.height - 2 {
+                break;
+            }
+            let line = Line::from(vec![
+                Span::styled("  ⊞ ", Style::default().fg(lane)),
+                Span::styled(truncate(&image.name, inner.width as usize / 2), Theme::text()),
+                Span::styled(format!("  {}×{} · {}", image.width, image.height, image.size_label()), Theme::dim()),
+                Span::styled(
+                    if i + 1 == composer.images.len() { "   ⌃X removes" } else { "" },
+                    Theme::faint_style(),
+                ),
+            ]);
+            buf.set_line(inner.x, y, &line, inner.width);
+            y += 1;
+        }
+    }
+
     if !reply {
         for line in &context_lines {
             if y >= inner.y + inner.height - 2 {
@@ -1723,9 +1875,13 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
             Span::styled("⌃P to edit", Theme::faint_style()),
         ])
     } else {
-        let signing = if app.signed() { "" } else { " · signed with your GitHub SSH key" };
+        let signing = if !app.signed() || !composer.images.is_empty() {
+            " · signed with your GitHub SSH key"
+        } else {
+            ""
+        };
         Line::from(Span::styled(
-            format!("⌃S commit · ⌃P preview · esc close{signing}"),
+            format!("⌃S commit · ⌃V image · esc close{signing}"),
             Theme::faint_style(),
         ))
     };

@@ -90,25 +90,33 @@ impl Theme {
     }
 
     pub fn lane(index: u8) -> Color {
-        rgb(match index % 6 {
+        rgb(Self::lane_hex(index))
+    }
+
+    pub fn lane_hex(index: u8) -> u32 {
+        match index % 6 {
             0 => 0xff8a4c,
             1 => 0x51cf66,
             2 => 0xda77f2,
             3 => 0x3bc9db,
             4 => 0xf06595,
             _ => 0xfcc419,
-        })
+        }
     }
 
     /// The color the web draws a user in: their chosen lane or custom color, or the same hash of their id the web
     /// falls back to (User::automaticLane), which is also what the public API leaves out.
     pub fn user_lane(user: &User) -> Color {
+        rgb(Self::user_lane_hex(user))
+    }
+
+    pub fn user_lane_hex(user: &User) -> u32 {
         match &user.lane {
-            Some(Value::Number(n)) => Self::lane(n.as_u64().unwrap_or(0) as u8),
-            Some(Value::String(hex)) if hex.len() == 7 && hex.starts_with('#') => u32::from_str_radix(&hex[1..], 16)
-                .map(rgb)
-                .unwrap_or_else(|_| Self::lane(automatic_lane(&user.id))),
-            _ => Self::lane(automatic_lane(&user.id)),
+            Some(Value::Number(n)) => Self::lane_hex(n.as_u64().unwrap_or(0) as u8),
+            Some(Value::String(hex)) if hex.len() == 7 && hex.starts_with('#') => {
+                u32::from_str_radix(&hex[1..], 16).unwrap_or_else(|_| Self::lane_hex(automatic_lane(&user.id)))
+            }
+            _ => Self::lane_hex(automatic_lane(&user.id)),
         }
     }
 
