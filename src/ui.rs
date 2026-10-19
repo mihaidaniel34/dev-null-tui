@@ -23,19 +23,44 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
 
-    let main = Rect { height: area.height - 1, ..area };
-    let status = Rect { y: area.y + area.height - 1, height: 1, ..area };
+    let main = Rect {
+        height: area.height - 1,
+        ..area
+    };
+    let status = Rect {
+        y: area.y + area.height - 1,
+        height: 1,
+        ..area
+    };
 
     let w = area.width;
     let sidebar_w: u16 = if w >= 100 { 22 } else { 5 };
-    let right_w: u16 = if w >= 134 { 40 } else if w >= 124 { 36 } else { 0 };
+    let right_w: u16 = if w >= 134 {
+        40
+    } else if w >= 124 {
+        36
+    } else {
+        0
+    };
     let center_w = (w - sidebar_w - right_w - 2).min(92);
     let total = sidebar_w + 1 + center_w + 1 + right_w;
     let left = area.x + (w - total) / 2;
 
-    let sidebar = Rect { x: left, width: sidebar_w, ..main };
-    let center = Rect { x: left + sidebar_w + 1, width: center_w, ..main };
-    let right = Rect { x: center.x + center_w + 1, width: right_w, ..main };
+    let sidebar = Rect {
+        x: left,
+        width: sidebar_w,
+        ..main
+    };
+    let center = Rect {
+        x: left + sidebar_w + 1,
+        width: center_w,
+        ..main
+    };
+    let right = Rect {
+        x: center.x + center_w + 1,
+        width: right_w,
+        ..main
+    };
 
     // Hairlines either side of the center column, as on the web.
     let buf = f.buffer_mut();
@@ -88,7 +113,12 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     let items: [(&str, &str, bool, &str); 5] = [
         ("◉", "Log", matches!(screen, Screen::Log(_)), "g l"),
         ("◔", "Notifications", *screen == Screen::Notifications, "g n"),
-        ("◯", "Profile", matches!(screen, Screen::Profile(u, _) if Some(u.clone()) == app.username()), "g p"),
+        (
+            "◯",
+            "Profile",
+            matches!(screen, Screen::Profile(u, _) if Some(u.clone()) == app.username()),
+            "g p",
+        ),
         ("□", "Saved", *screen == Screen::Saved, "g b"),
         ("≡", "Settings", *screen == Screen::Settings, "g s"),
     ];
@@ -98,12 +128,28 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
         if y + 1 >= area.y + area.height {
             break;
         }
-        let row = Rect { x: area.x + 1, y, width: area.width.saturating_sub(2), height: 1 };
-        let style = if active { Style::default().fg(Theme::primary()).bg(Theme::primary_soft()) } else { Theme::dim() };
+        let row = Rect {
+            x: area.x + 1,
+            y,
+            width: area.width.saturating_sub(2),
+            height: 1,
+        };
+        let style = if active {
+            Style::default().fg(Theme::primary()).bg(Theme::primary_soft())
+        } else {
+            Theme::dim()
+        };
         buf.set_style(row, style);
         let mut spans = vec![Span::styled(format!(" {icon} "), style)];
         if wide {
-            spans.push(Span::styled(format!(" {label}"), if active { style.add_modifier(Modifier::BOLD) } else { Theme::text() }));
+            spans.push(Span::styled(
+                format!(" {label}"),
+                if active {
+                    style.add_modifier(Modifier::BOLD)
+                } else {
+                    Theme::text()
+                },
+            ));
             let used = 4 + label.len() as u16;
             if used + keys.len() as u16 + 2 <= row.width {
                 let pad = row.width - used - keys.len() as u16 - 1;
@@ -117,8 +163,16 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
 
     // The commit button.
     if y + 1 < area.y + area.height {
-        let row = Rect { x: area.x + 1, y, width: area.width.saturating_sub(2), height: 1 };
-        let style = Style::default().fg(Theme::shell()).bg(Theme::primary()).add_modifier(Modifier::BOLD);
+        let row = Rect {
+            x: area.x + 1,
+            y,
+            width: area.width.saturating_sub(2),
+            height: 1,
+        };
+        let style = Style::default()
+            .fg(Theme::shell())
+            .bg(Theme::primary())
+            .add_modifier(Modifier::BOLD);
         buf.set_style(row, style);
         let label = if wide { " ⊕  Commit" } else { " ⊕ " };
         buf.set_line(row.x, y, &Line::from(Span::styled(label, style)), row.width);
@@ -132,7 +186,14 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     let line = match (&app.me, app.username()) {
         (Some(me), _) => Line::from(vec![
             Span::styled(" ● ", Style::default().fg(Theme::user_lane(&me.user))),
-            Span::styled(if wide { truncate(&format!("@{}", me.user.username), area.width as usize - 5) } else { String::new() }, Theme::dim()),
+            Span::styled(
+                if wide {
+                    truncate(&format!("@{}", me.user.username), area.width as usize - 5)
+                } else {
+                    String::new()
+                },
+                Theme::dim(),
+            ),
         ]),
         (None, Some(username)) if wide => Line::from(vec![
             Span::styled(" ○ ", Theme::dim()),
@@ -151,7 +212,15 @@ fn draw_center(f: &mut Frame, app: &mut App, area: Rect) {
 
     match &screen {
         Screen::Log(active) => {
-            draw_tabs(f.buffer_mut(), Rect { y: y + 1, height: 2, ..area }, &Log::ALL.map(|l| (l.title(), l == *active)));
+            draw_tabs(
+                f.buffer_mut(),
+                Rect {
+                    y: y + 1,
+                    height: 2,
+                    ..area
+                },
+                &Log::ALL.map(|l| (l.title(), l == *active)),
+            );
             y += 3;
             hairline(f.buffer_mut(), area.x, y, area.width);
             y += 1;
@@ -163,16 +232,38 @@ fn draw_center(f: &mut Frame, app: &mut App, area: Rect) {
             y = draw_header(f.buffer_mut(), app, Rect { y, height: 1, ..area }, &format!("@{username}"));
             let profile = app.feed().and_then(|feed| feed.profile.clone());
             if let Some(profile) = profile {
-                y = draw_profile_card(f.buffer_mut(), app, Rect { x: area.x, y, width: area.width, height: area.height.saturating_sub(y - area.y) }, &profile);
+                y = draw_profile_card(
+                    f.buffer_mut(),
+                    app,
+                    Rect {
+                        x: area.x,
+                        y,
+                        width: area.width,
+                        height: area.height.saturating_sub(y - area.y),
+                    },
+                    &profile,
+                );
             }
-            draw_tabs(f.buffer_mut(), Rect { y, height: 2, ..area }, &[("Commits", !replies), ("Replies", *replies)]);
+            draw_tabs(
+                f.buffer_mut(),
+                Rect { y, height: 2, ..area },
+                &[("Commits", !replies), ("Replies", *replies)],
+            );
             y += 2;
             hairline(f.buffer_mut(), area.x, y, area.width);
             y += 1;
         }
         Screen::Settings => {
             y = draw_header(f.buffer_mut(), app, Rect { y, height: 1, ..area }, "Settings");
-            draw_settings(f, app, Rect { y, height: area.height.saturating_sub(y - area.y), ..area });
+            draw_settings(
+                f,
+                app,
+                Rect {
+                    y,
+                    height: area.height.saturating_sub(y - area.y),
+                    ..area
+                },
+            );
             return;
         }
         other => {
@@ -191,7 +282,11 @@ fn draw_center(f: &mut Frame, app: &mut App, area: Rect) {
         y += 1;
     }
 
-    let feed_area = Rect { y, height: area.height.saturating_sub(y - area.y), ..area };
+    let feed_area = Rect {
+        y,
+        height: area.height.saturating_sub(y - area.y),
+        ..area
+    };
     app.feed_area = feed_area;
     draw_feed(f, app, feed_area);
 }
@@ -210,7 +305,12 @@ fn draw_tabs(buf: &mut Buffer, area: Rect, tabs: &[(&str, bool)]) {
         let style = if *active { Theme::bold() } else { Theme::dim() };
         buf.set_string(lx, area.y, *label, style);
         if *active {
-            buf.set_string(lx.saturating_sub(1), area.y + 1, "━".repeat(lw as usize + 2), Style::default().fg(Theme::primary()));
+            buf.set_string(
+                lx.saturating_sub(1),
+                area.y + 1,
+                "━".repeat(lw as usize + 2),
+                Style::default().fg(Theme::primary()),
+            );
         }
     }
 }
@@ -281,7 +381,11 @@ fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile)
     }
 
     let mut counts = Vec::new();
-    for (n, label) in [(user.commits_count, "commits"), (user.following_count, "following"), (user.followers_count, "followers")] {
+    for (n, label) in [
+        (user.commits_count, "commits"),
+        (user.following_count, "following"),
+        (user.followers_count, "followers"),
+    ] {
         if let Some(n) = n {
             counts.push(Span::styled(count(n), Theme::bold()));
             counts.push(Span::styled(format!(" {label}   "), Theme::dim()));
@@ -292,7 +396,11 @@ fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile)
         let following = profile.is_following == Some(true);
         counts.push(Span::styled(
             if following { " Following · f " } else { " Follow · f " },
-            if following { Style::default().fg(Theme::ink()).bg(Theme::wash()) } else { Style::default().fg(Theme::shell()).bg(Theme::primary()) },
+            if following {
+                Style::default().fg(Theme::ink()).bg(Theme::wash())
+            } else {
+                Style::default().fg(Theme::shell()).bg(Theme::primary())
+            },
         ));
     }
     lines.push(Line::from(counts));
@@ -335,12 +443,26 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
             (empty_message(&screen).to_string(), Theme::dim())
         };
         let y = area.y + area.height / 3;
-        let p = Paragraph::new(message).style(style).alignment(Alignment::Center).wrap(Wrap { trim: true });
-        f.render_widget(p, Rect { x: area.x + 4, y, width: area.width.saturating_sub(8), height: area.height.saturating_sub(y - area.y) });
+        let p = Paragraph::new(message)
+            .style(style)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        f.render_widget(
+            p,
+            Rect {
+                x: area.x + 4,
+                y,
+                width: area.width.saturating_sub(8),
+                height: area.height.saturating_sub(y - area.y),
+            },
+        );
         return;
     }
 
-    let chronological = matches!(screen, Screen::Log(Log::Latest) | Screen::Log(Log::Following) | Screen::Profile(_, _));
+    let chronological = matches!(
+        screen,
+        Screen::Log(Log::Latest) | Screen::Log(Log::Following) | Screen::Profile(_, _)
+    );
     let mut all: Vec<Line<'static>> = Vec::new();
     let mut offsets = Vec::with_capacity(feed.items.len());
     let mut last_day: Option<String> = None;
@@ -350,7 +472,15 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
         let mut rendered = match item {
             Item::Commit(commit, role) => {
                 let next_is_thread = matches!(feed.items.get(i + 1), Some(Item::Commit(_, Role::Focus | Role::Ancestor)));
-                render_commit(feed, commit, *role, area.width as usize, selected, pasteis, next_is_thread && *role == Role::Ancestor)
+                render_commit(
+                    feed,
+                    commit,
+                    *role,
+                    area.width as usize,
+                    selected,
+                    pasteis,
+                    next_is_thread && *role == Role::Ancestor,
+                )
             }
             Item::Notification(n) => render_notification(n, area.width as usize, selected),
         };
@@ -361,7 +491,10 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
             if let (Some(at), false) = (at, pinned) {
                 let label = day_label(at);
                 if last_day.as_deref() != Some(label.as_str()) {
-                    let mut lines = vec![Line::from(Span::styled(format!("    {label}"), Theme::faint_style())), hairline_line(area.width)];
+                    let mut lines = vec![
+                        Line::from(Span::styled(format!("    {label}"), Theme::faint_style())),
+                        hairline_line(area.width),
+                    ];
                     rendered.highlight_from += lines.len();
                     lines.append(&mut rendered.lines);
                     rendered.lines = lines;
@@ -386,10 +519,11 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
     } else if let Some(notice) = &feed.notice {
         all.push(Line::from(Span::styled(format!("    {notice}"), Theme::dim())));
     }
-    if let (Screen::Thread(_), Some(notice)) = (&screen, &feed.notice) {
-        if feed.cursor.is_none() && !feed.loading {
-            all.push(Line::from(Span::styled(format!("    {notice}"), Theme::dim())));
-        }
+    if let (Screen::Thread(_), Some(notice)) = (&screen, &feed.notice)
+        && feed.cursor.is_none()
+        && !feed.loading
+    {
+        all.push(Line::from(Span::styled(format!("    {notice}"), Theme::dim())));
     }
 
     // Keep the selected commit in view.
@@ -415,7 +549,15 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
         let y = area.y + row as u16;
         let index = scroll + row;
         if index >= sel_start && index < sel_end {
-            buf.set_style(Rect { x: area.x, y, width: area.width, height: 1 }, Style::default().bg(Theme::wash()));
+            buf.set_style(
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+                Style::default().bg(Theme::wash()),
+            );
         }
         buf.set_line(area.x, y, line, area.width);
     }
@@ -465,12 +607,25 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
 
     if commit.is_tombstone() {
         let rail = Span::styled("│", Style::default().fg(Theme::rail()));
-        lines.push(Line::from([gutter(selected, Span::styled("○", Theme::faint_style())), vec![Span::styled("This commit was deleted.", Theme::faint_style().add_modifier(Modifier::ITALIC))]].concat()));
+        lines.push(Line::from(
+            [
+                gutter(selected, Span::styled("○", Theme::faint_style())),
+                vec![Span::styled(
+                    "This commit was deleted.",
+                    Theme::faint_style().add_modifier(Modifier::ITALIC),
+                )],
+            ]
+            .concat(),
+        ));
         lines.push(Line::from(gutter(selected, if rail_after { rail } else { Span::raw(" ") })));
         if !rail_after {
             lines.push(hairline_line(w as u16));
         }
-        return Rendered { lines, highlight_from: 0, trailer: usize::from(!rail_after) };
+        return Rendered {
+            lines,
+            highlight_from: 0,
+            trailer: usize::from(!rail_after),
+        };
     }
 
     let author = commit.author.clone().unwrap_or_default();
@@ -478,20 +633,39 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
     let replies: Vec<Commit> = if feed.collapsed.contains(&commit.id) || role != Role::Normal {
         vec![]
     } else if feed.expanded.contains(&commit.id) {
-        feed.replies.get(&commit.id).cloned().unwrap_or_else(|| commit.reply_preview.clone().map(|p| p.data).unwrap_or_default())
+        feed.replies
+            .get(&commit.id)
+            .cloned()
+            .unwrap_or_else(|| commit.reply_preview.clone().map(|p| p.data).unwrap_or_default())
     } else {
         commit.reply_preview.clone().map(|p| p.data).unwrap_or_default()
     };
     let has_rail = !replies.is_empty() || rail_after || (role == Role::Focus && commit.replies_count.unwrap_or(0) > 0);
-    let rail = || if has_rail { Span::styled("│", Style::default().fg(lane)) } else { Span::raw(" ") };
+    let rail = || {
+        if has_rail {
+            Span::styled("│", Style::default().fg(lane))
+        } else {
+            Span::raw(" ")
+        }
+    };
 
     if commit.is_pinned == Some(true) && role == Role::Normal {
-        lines.push(Line::from([gutter(selected, Span::raw(" ")), vec![Span::styled("◇ Pinned", Theme::faint_style())]].concat()));
+        lines.push(Line::from(
+            [
+                gutter(selected, Span::raw(" ")),
+                vec![Span::styled("◇ Pinned", Theme::faint_style())],
+            ]
+            .concat(),
+        ));
     }
 
     // Name @username · 2m ............ hash
     let pending = commit.status.as_deref() == Some("pending");
-    let node = if pending { Span::styled("◌", Style::default().fg(lane)) } else { Span::styled("●", Style::default().fg(lane).add_modifier(Modifier::BOLD)) };
+    let node = if pending {
+        Span::styled("◌", Style::default().fg(lane))
+    } else {
+        Span::styled("●", Style::default().fg(lane).add_modifier(Modifier::BOLD))
+    };
     let hash = commit.hash();
     let time = relative_time(commit.created_at);
     let mut status: Vec<Span<'static>> = Vec::new();
@@ -540,13 +714,24 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
     // Images, link card, quote, poll.
     let mut extras: Vec<Line<'static>> = Vec::new();
     if let Some(images) = commit.images.as_ref().filter(|i| !i.is_empty()) {
-        let sizes: Vec<String> = images.iter().map(|i| match (i.width, i.height) {
-            (Some(w), Some(h)) => format!("{w}×{h}"),
-            _ => "image".into(),
-        }).collect();
+        let sizes: Vec<String> = images
+            .iter()
+            .map(|i| match (i.width, i.height) {
+                (Some(w), Some(h)) => format!("{w}×{h}"),
+                _ => "image".into(),
+            })
+            .collect();
         extras.push(Line::from(vec![
             Span::styled("⊞ ", Style::default().fg(lane)),
-            Span::styled(format!("{} image{} · {}", images.len(), if images.len() == 1 { "" } else { "s" }, sizes.join(", ")), Theme::dim()),
+            Span::styled(
+                format!(
+                    "{} image{} · {}",
+                    images.len(),
+                    if images.len() == 1 { "" } else { "s" },
+                    sizes.join(", ")
+                ),
+                Theme::dim(),
+            ),
             Span::styled("  w opens", Theme::faint_style()),
         ]));
     }
@@ -556,9 +741,16 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
     if let Some(quoted) = &commit.quoted_commit {
         extras.extend(boxed(quote_lines(quoted, content.saturating_sub(4)), content));
     } else if commit.quoted_commit_id.is_some() {
-        extras.extend(boxed(vec![Line::from(Span::styled("This commit is unavailable.", Theme::faint_style()))], content));
+        extras.extend(boxed(
+            vec![Line::from(Span::styled("This commit is unavailable.", Theme::faint_style()))],
+            content,
+        ));
     }
-    if let Some(preview) = commit.link_preview.as_ref().filter(|p| p.title.is_some() || p.description.is_some()) {
+    if let Some(preview) = commit
+        .link_preview
+        .as_ref()
+        .filter(|p| p.title.is_some() || p.description.is_some())
+    {
         extras.extend(boxed(link_lines(preview, content.saturating_sub(4)), content));
     }
     if !extras.is_empty() {
@@ -568,24 +760,43 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
     // Actions.
     let starred = commit.starred.unwrap_or(false);
     let mut actions = vec![
-        Span::styled(if starred { "★" } else { "☆" }, Style::default().fg(if starred { Theme::star() } else { Theme::muted() })),
+        Span::styled(
+            if starred { "★" } else { "☆" },
+            Style::default().fg(if starred { Theme::star() } else { Theme::muted() }),
+        ),
         Span::styled(format!(" {:<5}", commit.stars_count.map(count).unwrap_or_default()), Theme::dim()),
     ];
     if pasteis {
         actions.push(Span::styled("◍", Style::default().fg(Theme::lane(5))));
-        actions.push(Span::styled(format!(" {:<5}", commit.pasteis_count.map(count).unwrap_or_else(|| "0".into())), Theme::dim()));
+        actions.push(Span::styled(
+            format!(" {:<5}", commit.pasteis_count.map(count).unwrap_or_else(|| "0".into())),
+            Theme::dim(),
+        ));
     }
     actions.push(Span::styled("❝ Quote   ", Theme::dim()));
     let replies_count = commit.replies_count.unwrap_or(0);
-    actions.push(Span::styled(if replies_count > 0 { format!("↩ {} repl{}", count(replies_count), if replies_count == 1 { "y" } else { "ies" }) } else { "↩ Reply".into() }, Theme::dim()));
+    actions.push(Span::styled(
+        if replies_count > 0 {
+            format!("↩ {} repl{}", count(replies_count), if replies_count == 1 { "y" } else { "ies" })
+        } else {
+            "↩ Reply".into()
+        },
+        Theme::dim(),
+    ));
     if commit.is_saved == Some(true) {
         let used: usize = actions.iter().map(|s| s.width()).sum();
         actions.push(Span::raw(" ".repeat(content.saturating_sub(used + 7))));
         actions.push(Span::styled("■ Saved", Style::default().fg(Theme::primary())));
     }
     if role == Role::Focus {
-        let full = commit.created_at.map(|t| t.with_timezone(&chrono::Local).format("%H:%M · %a %-d %b %Y").to_string()).unwrap_or_default();
-        prefix(&mut lines, vec![Line::default(), Line::from(Span::styled(full, Theme::faint_style()))]);
+        let full = commit
+            .created_at
+            .map(|t| t.with_timezone(&chrono::Local).format("%H:%M · %a %-d %b %Y").to_string())
+            .unwrap_or_default();
+        prefix(
+            &mut lines,
+            vec![Line::default(), Line::from(Span::styled(full, Theme::faint_style()))],
+        );
     }
     prefix(&mut lines, vec![Line::from(actions)]);
 
@@ -600,7 +811,10 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
             let mut reply_lines = vec![Line::from(vec![
                 Span::styled("● ", Style::default().fg(reply_lane)),
                 Span::styled(truncate(reply_author.display_name(), inner / 2), Theme::bold()),
-                Span::styled(format!(" @{} · {}", reply_author.username, relative_time(reply.created_at)), Theme::dim()),
+                Span::styled(
+                    format!(" @{} · {}", reply_author.username, relative_time(reply.created_at)),
+                    Theme::dim(),
+                ),
             ])];
             let mut body = body_lines(reply.body.as_deref().unwrap_or(""), inner.saturating_sub(2), Theme::text());
             if body.len() > 4 {
@@ -625,10 +839,18 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
         }
         let shown = total as u64;
         if replies_count > shown && !feed.expanded.contains(&commit.id) {
-            lines.push(Line::from([gutter(selected, Span::raw(" ")), vec![Span::styled(format!("   {} more · o", replies_count - shown), Theme::link())]].concat()));
+            lines.push(Line::from(
+                [
+                    gutter(selected, Span::raw(" ")),
+                    vec![Span::styled(format!("   {} more · o", replies_count - shown), Theme::link())],
+                ]
+                .concat(),
+            ));
         }
     } else if feed.expanded.contains(&commit.id) && replies_count > 0 && role == Role::Normal {
-        lines.push(Line::from([gutter(selected, rail()), vec![Span::styled("loading replies…", Theme::dim())]].concat()));
+        lines.push(Line::from(
+            [gutter(selected, rail()), vec![Span::styled("loading replies…", Theme::dim())]].concat(),
+        ));
     }
 
     if rail_after {
@@ -637,13 +859,31 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
         lines.push(Line::from(gutter(selected, Span::raw(" "))));
         lines.push(hairline_line(w as u16));
         if role == Role::Focus {
-            lines.push(Line::from(Span::styled(format!("    Replies{}", if replies_count > 0 { format!(" · {replies_count}") } else { String::new() }), Theme::faint_style())));
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "    Replies{}",
+                    if replies_count > 0 {
+                        format!(" · {replies_count}")
+                    } else {
+                        String::new()
+                    }
+                ),
+                Theme::faint_style(),
+            )));
             lines.push(hairline_line(w as u16));
-            return Rendered { lines, highlight_from: 0, trailer: 3 };
+            return Rendered {
+                lines,
+                highlight_from: 0,
+                trailer: 3,
+            };
         }
     }
 
-    Rendered { lines, highlight_from: 0, trailer: 1 }
+    Rendered {
+        lines,
+        highlight_from: 0,
+        trailer: 1,
+    }
 }
 
 fn quote_lines(commit: &Commit, w: usize) -> Vec<Line<'static>> {
@@ -654,7 +894,10 @@ fn quote_lines(commit: &Commit, w: usize) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(vec![
         Span::styled("● ", Style::default().fg(Theme::user_lane(&author))),
         Span::styled(truncate(author.display_name(), w / 2), Theme::bold()),
-        Span::styled(format!(" @{} · {}", author.username, relative_time(commit.created_at)), Theme::dim()),
+        Span::styled(
+            format!(" @{} · {}", author.username, relative_time(commit.created_at)),
+            Theme::dim(),
+        ),
     ])];
     let mut body = body_lines(commit.body.as_deref().unwrap_or(""), w, Theme::text());
     if body.len() > 4 {
@@ -703,7 +946,10 @@ fn render_poll(poll: &Poll, w: usize) -> Vec<Line<'static>> {
                     Span::styled(if option.voted { " ✓" } else { "" }, Theme::link()),
                 ]));
             }
-            None => lines.push(Line::from(vec![Span::styled("○ ", Theme::dim()), Span::styled(label, Theme::text())])),
+            None => lines.push(Line::from(vec![
+                Span::styled("○ ", Theme::dim()),
+                Span::styled(label, Theme::text()),
+            ])),
         }
     }
     let mut footer = Vec::new();
@@ -749,7 +995,10 @@ fn render_notification(n: &Notification, w: usize, selected: bool) -> Rendered {
         _ => ("•", Theme::muted(), "did something"),
     };
     let unread = n.unread_count.unwrap_or(0) > 0;
-    let mut spans = gutter(selected, Span::styled(icon, Style::default().fg(color).add_modifier(Modifier::BOLD)));
+    let mut spans = gutter(
+        selected,
+        Span::styled(icon, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+    );
     if matches!(n.kind.as_str(), "approved" | "rejected") {
         spans.push(Span::styled(verb, Theme::bold()));
     } else {
@@ -757,7 +1006,10 @@ fn render_notification(n: &Notification, w: usize, selected: bool) -> Rendered {
         spans.push(Span::styled(truncate(actor.display_name(), content / 2), Theme::bold()));
         let others = n.actors_count.unwrap_or(1).saturating_sub(1);
         if others > 0 {
-            spans.push(Span::styled(format!(" and {others} other{}", if others == 1 { "" } else { "s" }), Theme::text()));
+            spans.push(Span::styled(
+                format!(" and {others} other{}", if others == 1 { "" } else { "s" }),
+                Theme::text(),
+            ));
         }
         spans.push(Span::styled(format!(" {verb}"), Theme::text()));
     }
@@ -786,13 +1038,20 @@ fn render_notification(n: &Notification, w: usize, selected: bool) -> Rendered {
     }
     lines.push(Line::default());
     lines.push(hairline_line(w as u16));
-    Rendered { lines, highlight_from: 0, trailer: 1 }
+    Rendered {
+        lines,
+        highlight_from: 0,
+        trailer: 1,
+    }
 }
 
 // Settings ------------------------------------------------------------------------------------------------------
 
 fn key_chip(key: &str) -> Span<'static> {
-    Span::styled(format!(" {key} "), Style::default().fg(Theme::ink()).bg(Theme::wash()).add_modifier(Modifier::BOLD))
+    Span::styled(
+        format!(" {key} "),
+        Style::default().fg(Theme::ink()).bg(Theme::wash()).add_modifier(Modifier::BOLD),
+    )
 }
 
 fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
@@ -812,25 +1071,50 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
             ])),
             None => lines.push(Line::from(Span::styled("Signed in.", Theme::text()))),
         }
-        lines.extend(wrap_plain("This terminal is one of your devices. It signs each request with its own key, so there's no password or token to leak.", w, Theme::dim()));
+        lines.extend(wrap_plain(
+            "This terminal is one of your devices. It signs each request with its own key, so there's no password or token to leak.",
+            w,
+            Theme::dim(),
+        ));
         if let Some(key) = crate::auth::DeviceKey::load(&config::key_path()) {
             lines.push(Line::from(Span::styled(key.fingerprint(), Theme::faint_style())));
         }
         lines.push(Line::default());
-        lines.push(Line::from(vec![key_chip("L"), Span::styled("  Sign out of this terminal", Theme::text())]));
+        lines.push(Line::from(vec![
+            key_chip("L"),
+            Span::styled("  Sign out of this terminal", Theme::text()),
+        ]));
     } else {
         lines.extend(wrap_plain("You're reading as a guest. Sign in to get the Following, Latest and Trending logs, notifications, replies, stars, saves and quotes.", w, Theme::dim()));
         lines.push(Line::default());
-        lines.push(Line::from(vec![key_chip("s"), Span::styled("  Sign in with your browser", Theme::text())]));
-        lines.extend(text::wrap_indented("Approves this terminal as a device, the way the mobile app signs in.", w, Theme::faint_style(), 5));
+        lines.push(Line::from(vec![
+            key_chip("s"),
+            Span::styled("  Sign in with your browser", Theme::text()),
+        ]));
+        lines.extend(text::wrap_indented(
+            "Approves this terminal as a device, the way the mobile app signs in.",
+            w,
+            Theme::faint_style(),
+            5,
+        ));
         lines.push(Line::default());
-        let username = app.config.username.clone().map(|u| format!("@{u}")).unwrap_or_else(|| "not set".into());
+        let username = app
+            .config
+            .username
+            .clone()
+            .map(|u| format!("@{u}"))
+            .unwrap_or_else(|| "not set".into());
         lines.push(Line::from(vec![
             key_chip("u"),
             Span::styled("  GitHub username  ", Theme::text()),
             Span::styled(username, Theme::link()),
         ]));
-        lines.extend(text::wrap_indented("Without signing in, your Following log is built from the public commits of the people you follow.", w, Theme::faint_style(), 5));
+        lines.extend(text::wrap_indented(
+            "Without signing in, your Following log is built from the public commits of the people you follow.",
+            w,
+            Theme::faint_style(),
+            5,
+        ));
         if app.config.username.is_some() {
             lines.push(Line::default());
             lines.push(Line::from(vec![key_chip("⏎"), Span::styled("  Go to your log", Theme::text())]));
@@ -841,12 +1125,29 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::default());
         lines.push(section("Signing in"));
         lines.push(Line::default());
-        lines.extend(wrap_plain("1. Approve this terminal on the page we opened. Not there?", w, Theme::text()));
-        lines.push(Line::from(vec![Span::raw("   "), key_chip("w"), Span::styled(" opens it again   ", Theme::dim()), key_chip("y"), Span::styled(" copies the link", Theme::dim())]));
+        lines.extend(wrap_plain(
+            "1. Approve this terminal on the page we opened. Not there?",
+            w,
+            Theme::text(),
+        ));
+        lines.push(Line::from(vec![
+            Span::raw("   "),
+            key_chip("w"),
+            Span::styled(" opens it again   ", Theme::dim()),
+            key_chip("y"),
+            Span::styled(" copies the link", Theme::dim()),
+        ]));
         lines.extend(wrap_plain("2. Your browser is then sent to a devnull:// link, meant for the app. Copy it from the address bar (or the \"Open devnull?\" prompt) and paste it here.", w, Theme::text()));
-        lines.push(Line::from(vec![Span::raw("   "), key_chip("v"), Span::styled(" paste the link", Theme::dim())]));
+        lines.push(Line::from(vec![
+            Span::raw("   "),
+            key_chip("v"),
+            Span::styled(" paste the link", Theme::dim()),
+        ]));
         lines.push(Line::default());
-        lines.push(Line::from(Span::styled(truncate(&sign_in.authorization.url, w), Theme::faint_style())));
+        lines.push(Line::from(Span::styled(
+            truncate(&sign_in.authorization.url, w),
+            Theme::faint_style(),
+        )));
     }
 
     lines.push(Line::default());
@@ -861,11 +1162,24 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::default());
     lines.push(section("Server"));
     lines.push(Line::default());
-    lines.push(Line::from(vec![Span::styled(app.api.base.clone(), Theme::link()), Span::styled("   DEVNULL_URL changes it", Theme::faint_style())]));
-    lines.push(Line::from(Span::styled(format!("Config in {}", config::dir().display()), Theme::faint_style())));
+    lines.push(Line::from(vec![
+        Span::styled(app.api.base.clone(), Theme::link()),
+        Span::styled("   DEVNULL_URL changes it", Theme::faint_style()),
+    ]));
+    lines.push(Line::from(Span::styled(
+        format!("Config in {}", config::dir().display()),
+        Theme::faint_style(),
+    )));
 
     let p = Paragraph::new(lines);
-    f.render_widget(p, Rect { x: area.x + 3, width: area.width.saturating_sub(5), ..area });
+    f.render_widget(
+        p,
+        Rect {
+            x: area.x + 3,
+            width: area.width.saturating_sub(5),
+            ..area
+        },
+    );
 }
 
 // Right panel ---------------------------------------------------------------------------------------------------
@@ -876,23 +1190,60 @@ fn draw_right(f: &mut Frame, app: &App, area: Rect) {
     let buf = f.buffer_mut();
 
     // Search
-    let search = Rect { x, y: area.y + 1, width: w, height: 3 };
-    Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(Theme::hairline())).render_ref(search, buf);
+    let search = Rect {
+        x,
+        y: area.y + 1,
+        width: w,
+        height: 3,
+    };
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Theme::hairline()))
+        .render_ref(search, buf);
     buf.set_string(x + 2, search.y + 1, "◎  Search", Theme::dim());
-    buf.set_string(x + w - 4, search.y + 1, " / ", Style::default().fg(Theme::muted()).bg(Theme::wash()));
+    buf.set_string(
+        x + w - 4,
+        search.y + 1,
+        " / ",
+        Style::default().fg(Theme::muted()).bg(Theme::wash()),
+    );
 
     let mut y = area.y + 5;
     match &app.me {
         Some(me) => {
             let user = &me.user;
-            buf.set_line(x, y, &Line::from(vec![Span::styled("◉ ", Style::default().fg(Theme::user_lane(user))), Span::styled(truncate(user.display_name(), w as usize - 2), Theme::bold())]), w);
+            buf.set_line(
+                x,
+                y,
+                &Line::from(vec![
+                    Span::styled("◉ ", Style::default().fg(Theme::user_lane(user))),
+                    Span::styled(truncate(user.display_name(), w as usize - 2), Theme::bold()),
+                ]),
+                w,
+            );
             y += 1;
-            buf.set_line(x, y, &Line::from(vec![Span::styled("● ", Style::default().fg(Theme::lane(1))), Span::styled(format!("@{}", user.username), Theme::dim())]), w);
+            buf.set_line(
+                x,
+                y,
+                &Line::from(vec![
+                    Span::styled("● ", Style::default().fg(Theme::lane(1))),
+                    Span::styled(format!("@{}", user.username), Theme::dim()),
+                ]),
+                w,
+            );
             y += 2;
             let mut row: Vec<Span> = Vec::new();
-            for (n, label) in [(user.commits_count, "commits"), (user.following_count, "following"), (user.followers_count, "followers")] {
+            for (n, label) in [
+                (user.commits_count, "commits"),
+                (user.following_count, "following"),
+                (user.followers_count, "followers"),
+            ] {
                 let Some(n) = n else { continue };
-                let group = [Span::styled(count(n), Theme::bold()), Span::styled(format!(" {label}  "), Theme::dim())];
+                let group = [
+                    Span::styled(count(n), Theme::bold()),
+                    Span::styled(format!(" {label}  "), Theme::dim()),
+                ];
                 let used: usize = row.iter().map(|s| s.width()).sum();
                 if used + group.iter().map(|s| s.width()).sum::<usize>() > w as usize + 2 {
                     buf.set_line(x, y, &Line::from(std::mem::take(&mut row)), w);
@@ -911,14 +1262,29 @@ fn draw_right(f: &mut Frame, app: &App, area: Rect) {
             }
             if me.pasteis_mode {
                 let left = me.pasteis_remaining.unwrap_or(0);
-                buf.set_line(x, y, &Line::from(vec![Span::styled("◍ ", Style::default().fg(Theme::lane(5))), Span::styled(format!("{left} pastéis left today"), Theme::dim())]), w);
+                buf.set_line(
+                    x,
+                    y,
+                    &Line::from(vec![
+                        Span::styled("◍ ", Style::default().fg(Theme::lane(5))),
+                        Span::styled(format!("{left} pastéis left today"), Theme::dim()),
+                    ]),
+                    w,
+                );
                 y += 2;
             }
         }
         None => {
             let lines = [
                 Line::from(Span::styled("Not signed in", Theme::bold())),
-                Line::from(Span::styled(app.config.username.clone().map(|u| format!("Reading as @{u}")).unwrap_or_else(|| "Reading as a guest".into()), Theme::dim())),
+                Line::from(Span::styled(
+                    app.config
+                        .username
+                        .clone()
+                        .map(|u| format!("Reading as @{u}"))
+                        .unwrap_or_else(|| "Reading as a guest".into()),
+                    Theme::dim(),
+                )),
                 Line::default(),
                 Line::from(vec![key_chip("g s"), Span::styled(" to sign in", Theme::dim())]),
             ];
@@ -934,17 +1300,35 @@ fn draw_right(f: &mut Frame, app: &App, area: Rect) {
     y += 2;
     buf.set_string(x, y, "Shortcuts", Theme::bold());
     y += 2;
-    let shortcuts = [("j k", "move"), ("⏎", "open"), ("r", "reply"), ("q", "quote"), ("s", "star"), ("c", "commit"), ("/", "go to")];
+    let shortcuts = [
+        ("j k", "move"),
+        ("⏎", "open"),
+        ("r", "reply"),
+        ("q", "quote"),
+        ("s", "star"),
+        ("c", "commit"),
+        ("/", "go to"),
+    ];
     for (key, label) in shortcuts {
         if y + 4 >= area.y + area.height {
             break;
         }
-        buf.set_line(x, y, &Line::from(vec![Span::styled(format!("{label:<10}"), Theme::dim()), key_chip(key)]), w);
+        buf.set_line(
+            x,
+            y,
+            &Line::from(vec![Span::styled(format!("{label:<10}"), Theme::dim()), key_chip(key)]),
+            w,
+        );
         y += 1;
     }
 
     let bottom = area.y + area.height - 2;
-    buf.set_line(x, bottom - 1, &Line::from(vec![Span::styled("Keyboard shortcuts ", Theme::dim()), key_chip("?")]), w);
+    buf.set_line(
+        x,
+        bottom - 1,
+        &Line::from(vec![Span::styled("Keyboard shortcuts ", Theme::dim()), key_chip("?")]),
+        w,
+    );
     buf.set_string(x, bottom, text::domain(&app.api.base), Theme::faint_style());
 }
 
@@ -966,21 +1350,43 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let spinner = SPINNER[app.tick % SPINNER.len()];
 
     let left: Line = if let Some(busy) = &app.busy {
-        Line::from(vec![Span::styled(format!(" {spinner} "), Theme::link()), Span::styled(busy.clone(), Theme::text())])
+        Line::from(vec![
+            Span::styled(format!(" {spinner} "), Theme::link()),
+            Span::styled(busy.clone(), Theme::text()),
+        ])
     } else if let Some((message, error, _)) = &app.toast {
         let color = if *error { Theme::destructive() } else { Theme::lane(1) };
-        Line::from(vec![Span::styled(if *error { " ✕ " } else { " ✓ " }, Style::default().fg(color)), Span::styled(message.clone(), Theme::text())])
+        Line::from(vec![
+            Span::styled(if *error { " ✕ " } else { " ✓ " }, Style::default().fg(color)),
+            Span::styled(message.clone(), Theme::text()),
+        ])
     } else if app.pending_g {
         Line::from(vec![
             Span::styled(" g ", Style::default().fg(Theme::shell()).bg(Theme::primary())),
-            Span::styled("  l log  e trending  f following  n notifications  p profile  b saved  s settings  g top", Theme::dim()),
+            Span::styled(
+                "  l log  e trending  f following  n notifications  p profile  b saved  s settings  g top",
+                Theme::dim(),
+            ),
         ])
     } else {
         let hints: &[(&str, &str)] = match app.screen() {
             Screen::Settings => &[("g l", "log"), ("?", "help"), ("Q", "quit")],
-            Screen::Profile(..) => &[("j/k", "move"), ("⏎", "open"), ("f", "follow"), ("⇥", "commits/replies"), ("esc", "back")],
+            Screen::Profile(..) => &[
+                ("j/k", "move"),
+                ("⏎", "open"),
+                ("f", "follow"),
+                ("⇥", "commits/replies"),
+                ("esc", "back"),
+            ],
             Screen::Thread(_) => &[("j/k", "move"), ("r", "reply"), ("s", "star"), ("a", "author"), ("esc", "back")],
-            _ => &[("j/k", "move"), ("⏎", "open"), ("r", "reply"), ("c", "commit"), ("⇥", "tab"), ("?", "help")],
+            _ => &[
+                ("j/k", "move"),
+                ("⏎", "open"),
+                ("r", "reply"),
+                ("c", "commit"),
+                ("⇥", "tab"),
+                ("?", "help"),
+            ],
         };
         let mut spans = vec![Span::raw(" ")];
         for (key, label) in hints {
@@ -997,7 +1403,12 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width.saturating_sub(2));
     let h = h.min(area.height.saturating_sub(2));
-    Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h }
+    Rect {
+        x: area.x + (area.width - w) / 2,
+        y: area.y + (area.height - h) / 2,
+        width: w,
+        height: h,
+    }
 }
 
 fn modal(f: &mut Frame, rect: Rect, title: &str) -> Rect {
@@ -1010,7 +1421,11 @@ fn modal(f: &mut Frame, rect: Rect, title: &str) -> Rect {
         .style(Style::default().bg(Theme::popover()));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner }
+    Rect {
+        x: inner.x + 1,
+        width: inner.width.saturating_sub(2),
+        ..inner
+    }
 }
 
 pub const SHORTCUTS: &[(&str, &[&str])] = &[
@@ -1096,13 +1511,21 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
 fn draw_confirm(f: &mut Frame, confirm: &Confirm, area: Rect) {
     let (title, message) = match confirm {
         Confirm::Delete(_) => ("Delete commit", "Delete this commit? It goes to /dev/null, for real this time."),
-        Confirm::SignOut => ("Sign out", "Sign out of this terminal? Its device key is deleted here; revoke it under Settings → Devices on the web too."),
+        Confirm::SignOut => (
+            "Sign out",
+            "Sign out of this terminal? Its device key is deleted here; revoke it under Settings → Devices on the web too.",
+        ),
     };
     let rect = centered(area, 56, 8);
     let inner = modal(f, rect, title);
     let mut lines = wrap_plain(message, inner.width as usize, Theme::text());
     lines.push(Line::default());
-    lines.push(Line::from(vec![key_chip("y"), Span::styled(" yes   ", Theme::dim()), key_chip("any key"), Span::styled(" no", Theme::dim())]));
+    lines.push(Line::from(vec![
+        key_chip("y"),
+        Span::styled(" yes   ", Theme::dim()),
+        key_chip("any key"),
+        Span::styled(" no", Theme::dim()),
+    ]));
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -1110,7 +1533,11 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     let Some(input) = &app.input else { return };
     let (title, hint, placeholder) = match input.kind {
         InputKind::Go => ("Go to", "A @username, a profile or commit link, or a commit id.", "@nunomaduro"),
-        InputKind::Username => ("Your GitHub username", "Used to build your Following log without signing in.", "octocat"),
+        InputKind::Username => (
+            "Your GitHub username",
+            "Used to build your Following log without signing in.",
+            "octocat",
+        ),
         InputKind::SignInCode => (
             "Sign in",
             "Approve this terminal in your browser. You're then sent to a devnull://auth/callback?code=… link: paste it here.",
@@ -1123,7 +1550,10 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
 
     let mut lines = wrap_plain(hint, w, Theme::dim());
     if input.kind == InputKind::SignInCode {
-        lines.push(Line::from(vec![key_chip("esc"), Span::styled(" then w reopens the page, y copies its link", Theme::faint_style())]));
+        lines.push(Line::from(vec![
+            key_chip("esc"),
+            Span::styled(" then w reopens the page, y copies its link", Theme::faint_style()),
+        ]));
     }
     lines.push(Line::default());
     let field_y = inner.y + lines.len() as u16;
@@ -1140,7 +1570,11 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
             (s, field_w - 1)
         }
     };
-    let field = if text.is_empty() { Span::styled(placeholder, Theme::faint_style()) } else { Span::styled(shown, Theme::text()) };
+    let field = if text.is_empty() {
+        Span::styled(placeholder, Theme::faint_style())
+    } else {
+        Span::styled(shown, Theme::text())
+    };
     lines.push(Line::from(vec![Span::styled("› ", Theme::link()), field]));
     lines.push(Line::default());
     if let Some(error) = &input.error {
@@ -1148,7 +1582,12 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     } else if app.sign_in.as_ref().is_some_and(|s| s.redeeming) && input.kind == InputKind::SignInCode {
         lines.push(Line::from(Span::styled("Signing in…", Theme::link())));
     } else {
-        lines.push(Line::from(vec![key_chip("⏎"), Span::styled(" go   ", Theme::faint_style()), key_chip("esc"), Span::styled(" cancel", Theme::faint_style())]));
+        lines.push(Line::from(vec![
+            key_chip("⏎"),
+            Span::styled(" go   ", Theme::faint_style()),
+            key_chip("esc"),
+            Span::styled(" cancel", Theme::faint_style()),
+        ]));
     }
     f.render_widget(Paragraph::new(lines), inner);
     f.set_cursor_position((inner.x + 2 + cursor_x as u16, field_y));
@@ -1159,8 +1598,14 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
     let w = 76.min(area.width.saturating_sub(4));
     let (title, context): (String, Option<&Commit>) = match &composer.mode {
         ComposeMode::New => ("New commit".into(), None),
-        ComposeMode::Reply(c) => (format!("Reply to @{}", c.author.as_ref().map(|a| a.username.as_str()).unwrap_or("?")), Some(c)),
-        ComposeMode::Quote(c) => (format!("Quote @{}", c.author.as_ref().map(|a| a.username.as_str()).unwrap_or("?")), Some(c)),
+        ComposeMode::Reply(c) => (
+            format!("Reply to @{}", c.author.as_ref().map(|a| a.username.as_str()).unwrap_or("?")),
+            Some(c),
+        ),
+        ComposeMode::Quote(c) => (
+            format!("Quote @{}", c.author.as_ref().map(|a| a.username.as_str()).unwrap_or("?")),
+            Some(c),
+        ),
     };
 
     let iw = w.saturating_sub(4) as usize;
@@ -1185,7 +1630,12 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
         y += 1;
     }
 
-    let text_area = Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(2), height: text_h.min(inner.y + inner.height - y - 3) };
+    let text_area = Rect {
+        x: inner.x + 2,
+        y,
+        width: inner.width.saturating_sub(2),
+        height: text_h.min(inner.y + inner.height - y - 3),
+    };
     buf.set_string(inner.x, y, "●", Style::default().fg(lane));
 
     let mut cursor_pos = (text_area.x, text_area.y);
@@ -1195,7 +1645,12 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
             buf.set_line(text_area.x, text_area.y + i as u16, line, text_area.width);
         }
     } else if composer.text.is_empty() {
-        buf.set_string(text_area.x, text_area.y, if reply { "Commit your reply" } else { "What did you ship?" }, Theme::faint_style());
+        buf.set_string(
+            text_area.x,
+            text_area.y,
+            if reply { "Commit your reply" } else { "What did you ship?" },
+            Theme::faint_style(),
+        );
     } else {
         // Wraps by character, so the cursor lands where the text does.
         let mut rows: Vec<(String, usize)> = vec![(String::new(), 0)];
@@ -1230,7 +1685,10 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
         for (i, (row, _)) in rows.iter().skip(first).take(visible).enumerate() {
             buf.set_string(text_area.x, text_area.y + i as u16, row, Theme::text());
         }
-        cursor_pos = (text_area.x + cursor_row_col.1 as u16, text_area.y + (cursor_row_col.0 - first) as u16);
+        cursor_pos = (
+            text_area.x + cursor_row_col.1 as u16,
+            text_area.y + (cursor_row_col.0 - first) as u16,
+        );
     }
     y = text_area.y + text_area.height;
 
@@ -1250,14 +1708,26 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
     let n = composer.text.iter().filter(|c| !c.is_whitespace() || **c == ' ').count();
     let over = composer.body().chars().count() > MAX_BODY;
     let status: Line = if let Some(error) = &composer.error {
-        Line::from(Span::styled(truncate(error, inner.width as usize - 24), Style::default().fg(Theme::destructive())))
+        Line::from(Span::styled(
+            truncate(error, inner.width as usize - 24),
+            Style::default().fg(Theme::destructive()),
+        ))
     } else if composer.sending {
-        Line::from(Span::styled(app.busy.clone().unwrap_or_else(|| "Committing…".into()), Theme::link()))
+        Line::from(Span::styled(
+            app.busy.clone().unwrap_or_else(|| "Committing…".into()),
+            Theme::link(),
+        ))
     } else if composer.preview {
-        Line::from(vec![Span::styled("Preview · ", Theme::link()), Span::styled("⌃P to edit", Theme::faint_style())])
+        Line::from(vec![
+            Span::styled("Preview · ", Theme::link()),
+            Span::styled("⌃P to edit", Theme::faint_style()),
+        ])
     } else {
         let signing = if app.signed() { "" } else { " · signed with your GitHub SSH key" };
-        Line::from(Span::styled(format!("⌃S commit · ⌃P preview · esc close{signing}"), Theme::faint_style()))
+        Line::from(Span::styled(
+            format!("⌃S commit · ⌃P preview · esc close{signing}"),
+            Theme::faint_style(),
+        ))
     };
     buf.set_line(inner.x, fy, &status, inner.width.saturating_sub(22));
 
@@ -1265,12 +1735,28 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
     let button = " Commit ";
     let bx = inner.x + inner.width - width(button) as u16;
     let empty = composer.body().is_empty();
-    buf.set_string(bx - counter.len() as u16 - 2, fy, &counter, if over { Style::default().fg(Theme::destructive()) } else { Theme::faint_style() });
+    buf.set_string(
+        bx - counter.len() as u16 - 2,
+        fy,
+        &counter,
+        if over {
+            Style::default().fg(Theme::destructive())
+        } else {
+            Theme::faint_style()
+        },
+    );
     buf.set_string(
         bx,
         fy,
         button,
-        if empty || over || composer.sending { Style::default().fg(Theme::muted()).bg(rgb_primary_muted()) } else { Style::default().fg(Theme::shell()).bg(Theme::primary()).add_modifier(Modifier::BOLD) },
+        if empty || over || composer.sending {
+            Style::default().fg(Theme::muted()).bg(rgb_primary_muted())
+        } else {
+            Style::default()
+                .fg(Theme::shell())
+                .bg(Theme::primary())
+                .add_modifier(Modifier::BOLD)
+        },
     );
 
     if !composer.preview && !composer.sending {

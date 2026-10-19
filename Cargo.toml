@@ -3,6 +3,8 @@ name = "devnull"
 version = "0.1.0"
 edition = "2024"
 description = "A terminal client for /dev/null, the social network for developers"
+repository = "https://github.com/mihaidaniel34/dev-null-tui"
+readme = "README.md"
 license = "MIT"
 
 [[bin]]

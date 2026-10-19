@@ -47,14 +47,14 @@ fn inline_spans(line: &str, base: Style) -> Vec<(String, Style)> {
         let c = chars[i];
         let prev_word = i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_');
 
-        if c == '`' {
-            if let Some(end) = chars[i + 1..].iter().position(|&x| x == '`') {
-                flush(&mut plain, &mut out);
-                let code: String = chars[i + 1..i + 1 + end].iter().collect();
-                out.push((format!(" {code} "), Theme::code()));
-                i += end + 2;
-                continue;
-            }
+        if c == '`'
+            && let Some(end) = chars[i + 1..].iter().position(|&x| x == '`')
+        {
+            flush(&mut plain, &mut out);
+            let code: String = chars[i + 1..i + 1 + end].iter().collect();
+            out.push((format!(" {code} "), Theme::code()));
+            i += end + 2;
+            continue;
         }
 
         let rest: String = chars[i..chars.len().min(i + 8)].iter().collect();
@@ -68,7 +68,11 @@ fn inline_spans(line: &str, base: Style) -> Vec<(String, Style)> {
                 end -= 1;
             }
             let url: String = chars[i..end].iter().collect();
-            let shown = url.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_string();
+            let shown = url
+                .trim_start_matches("https://")
+                .trim_start_matches("http://")
+                .trim_end_matches('/')
+                .to_string();
             out.push((shown, Theme::link().add_modifier(Modifier::UNDERLINED)));
             i = end;
             continue;
@@ -159,7 +163,10 @@ pub fn wrap_spans(runs: Vec<(String, Style)>, max: usize) -> Vec<Vec<Span<'stati
     }
 
     for line in lines.iter_mut() {
-        while line.last().is_some_and(|s| s.style != Theme::code() && s.content.chars().all(char::is_whitespace)) {
+        while line
+            .last()
+            .is_some_and(|s| s.style != Theme::code() && s.content.chars().all(char::is_whitespace))
+        {
             line.pop();
         }
     }
@@ -167,7 +174,10 @@ pub fn wrap_spans(runs: Vec<(String, Style)>, max: usize) -> Vec<Vec<Span<'stati
 }
 
 pub fn wrap_plain(text: &str, max: usize, style: Style) -> Vec<Line<'static>> {
-    text.split('\n').flat_map(|l| wrap_spans(vec![(l.to_string(), style)], max)).map(Line::from).collect()
+    text.split('\n')
+        .flat_map(|l| wrap_spans(vec![(l.to_string(), style)], max))
+        .map(Line::from)
+        .collect()
 }
 
 /// Wraps text with every line indented, for hanging descriptions.
@@ -189,7 +199,10 @@ pub fn body_lines(body: &str, max: usize, base: Style) -> Vec<Line<'static>> {
             if in_code {
                 let lang = raw.trim().trim_start_matches('`').trim();
                 if !lang.is_empty() {
-                    lines.push(Line::from(Span::styled(format!(" {lang} "), Theme::faint_style().bg(Theme::wash()))));
+                    lines.push(Line::from(Span::styled(
+                        format!(" {lang} "),
+                        Theme::faint_style().bg(Theme::wash()),
+                    )));
                 }
             }
             continue;
@@ -234,7 +247,11 @@ pub fn relative_time(at: Option<DateTime<Utc>>) -> String {
         86_400..=604_799 => format!("{}d", seconds / 86_400),
         _ => {
             let local = at.with_timezone(&Local);
-            if local.year() == Local::now().year() { local.format("%-d %b").to_string() } else { local.format("%-d %b %Y").to_string() }
+            if local.year() == Local::now().year() {
+                local.format("%-d %b").to_string()
+            } else {
+                local.format("%-d %b %Y").to_string()
+            }
         }
     }
 }
@@ -253,7 +270,10 @@ pub fn day_label(at: DateTime<Utc>) -> String {
 }
 
 pub fn domain(url: &str) -> String {
-    url::Url::parse(url).ok().and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string())).unwrap_or_default()
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string()))
+        .unwrap_or_default()
 }
 
 pub fn count(n: u64) -> String {
@@ -274,12 +294,18 @@ mod tests {
 
     #[test]
     fn it_wraps_on_words() {
-        assert_eq!(plain(&body_lines("one two three four", 9, Style::default())), ["one two", "three", "four"]);
+        assert_eq!(
+            plain(&body_lines("one two three four", 9, Style::default())),
+            ["one two", "three", "four"]
+        );
     }
 
     #[test]
     fn a_mention_and_what_follows_it_wrap_together() {
-        assert_eq!(plain(&body_lines("I built @madinco/smith today", 16, Style::default())), ["I built", "@madinco/smith", "today"]);
+        assert_eq!(
+            plain(&body_lines("I built @madinco/smith today", 16, Style::default())),
+            ["I built", "@madinco/smith", "today"]
+        );
     }
 
     #[test]
@@ -291,6 +317,9 @@ mod tests {
 
     #[test]
     fn links_show_without_their_scheme() {
-        assert_eq!(plain(&body_lines("see https://dev-null.sh/terminal.", 40, Style::default())), ["see dev-null.sh/terminal."]);
+        assert_eq!(
+            plain(&body_lines("see https://dev-null.sh/terminal.", 40, Style::default())),
+            ["see dev-null.sh/terminal."]
+        );
     }
 }

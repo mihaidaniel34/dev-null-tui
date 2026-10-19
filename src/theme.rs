@@ -37,7 +37,15 @@ pub fn rgb(hex: u32) -> Color {
         return Color::Indexed(232 + ((level - 8) / 10).min(23) as u8);
     }
 
-    let cube = |v: u8| -> u8 { if v < 48 { 0 } else if v < 115 { 1 } else { ((v - 35) / 40).min(5) } };
+    let cube = |v: u8| -> u8 {
+        if v < 48 {
+            0
+        } else if v < 115 {
+            1
+        } else {
+            ((v - 35) / 40).min(5)
+        }
+    };
     Color::Indexed(16 + 36 * cube(r) + 6 * cube(g) + cube(b))
 }
 
@@ -97,9 +105,9 @@ impl Theme {
     pub fn user_lane(user: &User) -> Color {
         match &user.lane {
             Some(Value::Number(n)) => Self::lane(n.as_u64().unwrap_or(0) as u8),
-            Some(Value::String(hex)) if hex.len() == 7 && hex.starts_with('#') => {
-                u32::from_str_radix(&hex[1..], 16).map(rgb).unwrap_or_else(|_| Self::lane(automatic_lane(&user.id)))
-            }
+            Some(Value::String(hex)) if hex.len() == 7 && hex.starts_with('#') => u32::from_str_radix(&hex[1..], 16)
+                .map(rgb)
+                .unwrap_or_else(|_| Self::lane(automatic_lane(&user.id))),
             _ => Self::lane(automatic_lane(&user.id)),
         }
     }

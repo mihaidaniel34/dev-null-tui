@@ -88,21 +88,42 @@ pub struct Feed {
 pub enum Loaded {
     Commits(Vec<Commit>, Option<String>),
     Notifications(Vec<Notification>, Option<String>),
-    Thread { ancestors: Vec<Commit>, focus: Commit, replies: Vec<Commit>, cursor: Option<String>, notice: Option<String> },
+    Thread {
+        ancestors: Vec<Commit>,
+        focus: Commit,
+        replies: Vec<Commit>,
+        cursor: Option<String>,
+        notice: Option<String>,
+    },
     Profile(Profile, Vec<Commit>, Option<String>),
     /// Nothing to load, and why.
     Notice(String),
 }
 
 pub enum Msg {
-    Loaded { screen: Screen, more: bool, result: Result<Loaded, String> },
-    Replies { screen: Screen, id: String, result: Result<Vec<Commit>, String> },
+    Loaded {
+        screen: Screen,
+        more: bool,
+        result: Result<Loaded, String>,
+    },
+    Replies {
+        screen: Screen,
+        id: String,
+        result: Result<Vec<Commit>, String>,
+    },
     Me(Result<CurrentUser, ApiFailure>),
     CommitUpdated(Commit),
     CommitDeleted(String),
     Posted(Result<Commit, String>),
-    Followed { username: String, on: bool, result: Result<(), String> },
-    NewCommits { screen: Screen, count: u64 },
+    Followed {
+        username: String,
+        on: bool,
+        result: Result<(), String>,
+    },
+    NewCommits {
+        screen: Screen,
+        count: u64,
+    },
     SignedIn(Result<CurrentUser, String>),
     Toast(String, bool),
 }
@@ -233,7 +254,10 @@ impl App {
     }
 
     pub fn username(&self) -> Option<String> {
-        self.me.as_ref().map(|m| m.user.username.clone()).or_else(|| self.config.username.clone())
+        self.me
+            .as_ref()
+            .map(|m| m.user.username.clone())
+            .or_else(|| self.config.username.clone())
     }
 
     pub fn screen(&self) -> &Screen {
@@ -333,16 +357,22 @@ impl App {
         let target = screen.clone();
         self.spawn(async move {
             let result = fetch(api, target.clone(), cursor, signed, guest_name).await;
-            Msg::Loaded { screen: target, more, result }
+            Msg::Loaded {
+                screen: target,
+                more,
+                result,
+            }
         });
     }
 
     fn maybe_load_more(&mut self) {
         let screen = self.screen().clone();
-        if let Some(feed) = self.feeds.get(&screen) {
-            if feed.cursor.is_some() && !feed.loading && feed.selected + 4 >= feed.items.len() {
-                self.load(screen, true);
-            }
+        if let Some(feed) = self.feeds.get(&screen)
+            && feed.cursor.is_some()
+            && !feed.loading
+            && feed.selected + 4 >= feed.items.len()
+        {
+            self.load(screen, true);
         }
     }
 
@@ -394,17 +424,21 @@ impl App {
             Msg::Followed { username, on, result } => match result {
                 Ok(()) => {
                     for (screen, feed) in self.feeds.iter_mut() {
-                        if matches!(screen, Screen::Profile(u, _) if *u == username) {
-                            if let Some(profile) = feed.profile.as_mut() {
-                                profile.is_following = Some(on);
-                                if let Some(n) = profile.data.followers_count.as_mut() {
-                                    *n = if on { *n + 1 } else { n.saturating_sub(1) };
-                                }
+                        if matches!(screen, Screen::Profile(u, _) if *u == username)
+                            && let Some(profile) = feed.profile.as_mut()
+                        {
+                            profile.is_following = Some(on);
+                            if let Some(n) = profile.data.followers_count.as_mut() {
+                                *n = if on { *n + 1 } else { n.saturating_sub(1) };
                             }
                         }
                     }
                     self.feeds.remove(&Screen::Log(Log::Following));
-                    self.toast(if on { format!("Following @{username}") } else { format!("Unfollowed @{username}") });
+                    self.toast(if on {
+                        format!("Following @{username}")
+                    } else {
+                        format!("Unfollowed @{username}")
+                    });
                 }
                 Err(e) => self.error(e),
             },
@@ -452,7 +486,11 @@ impl App {
                 let mode = composer.mode.clone();
                 self.composer = None;
                 self.draft = None;
-                self.toast(if pending { "Committed. Pending review: only you can see it until it's approved." } else { "Committed." });
+                self.toast(if pending {
+                    "Committed. Pending review: only you can see it until it's approved."
+                } else {
+                    "Committed."
+                });
 
                 match mode {
                     ComposeMode::Reply(parent) => {
@@ -479,10 +517,10 @@ impl App {
 
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
-        if let Some((_, error, at)) = &self.toast {
-            if at.elapsed() > Duration::from_secs(if *error { 8 } else { 4 }) {
-                self.toast = None;
-            }
+        if let Some((_, error, at)) = &self.toast
+            && at.elapsed() > Duration::from_secs(if *error { 8 } else { 4 })
+        {
+            self.toast = None;
         }
 
         // Count what's new on the log, as the web does, about once a minute.
@@ -496,7 +534,9 @@ impl App {
                 return;
             }
             feed.checked_at = Some(Instant::now());
-            let Some(first) = feed.items.first().and_then(|i| i.commit()).map(|c| c.id.clone()) else { return };
+            let Some(first) = feed.items.first().and_then(|i| i.commit()).map(|c| c.id.clone()) else {
+                return;
+            };
             let api = self.api.clone();
             self.spawn(async move {
                 let count = api.new_commits_since(log, &first).await.unwrap_or(0);
@@ -598,7 +638,11 @@ impl App {
 
         let mut optimistic = commit.clone();
         optimistic.starred = Some(on);
-        optimistic.stars_count = Some(if on { commit.stars_count.unwrap_or(0) + 1 } else { commit.stars_count.unwrap_or(1) - 1 });
+        optimistic.stars_count = Some(if on {
+            commit.stars_count.unwrap_or(0) + 1
+        } else {
+            commit.stars_count.unwrap_or(1) - 1
+        });
         self.update_commit(optimistic);
 
         let api = self.api.clone();
@@ -670,7 +714,11 @@ impl App {
         if self.username().as_deref() == Some(username.as_str()) {
             return;
         }
-        let on = !self.feed().and_then(|f| f.profile.as_ref()).and_then(|p| p.is_following).unwrap_or(false);
+        let on = !self
+            .feed()
+            .and_then(|f| f.profile.as_ref())
+            .and_then(|p| p.is_following)
+            .unwrap_or(false);
         let api = self.api.clone();
         self.spawn(async move {
             let result = api.follow(&username, on).await.map_err(|e| e.to_string());
@@ -679,13 +727,13 @@ impl App {
     }
 
     fn copy_link(&mut self) {
-        if let Screen::Profile(username, _) = self.screen().clone() {
-            if self.selected_commit().is_none() {
-                let url = format!("{}/@{}", self.api.base, username);
-                system::copy(&url);
-                self.toast(format!("Copied {url}"));
-                return;
-            }
+        if let Screen::Profile(username, _) = self.screen().clone()
+            && self.selected_commit().is_none()
+        {
+            let url = format!("{}/@{}", self.api.base, username);
+            system::copy(&url);
+            self.toast(format!("Copied {url}"));
+            return;
         }
         if *self.screen() == Screen::Settings {
             if let Some(sign_in) = &self.sign_in {
@@ -716,17 +764,24 @@ impl App {
     }
 
     fn compose(&mut self, mode: ComposeMode) {
-        if let ComposeMode::Quote(_) = mode {
-            if self.needs_sign_in("quote commits") {
-                return;
-            }
+        if let ComposeMode::Quote(_) = mode
+            && self.needs_sign_in("quote commits")
+        {
+            return;
         }
         let text = match mode {
             ComposeMode::New => self.draft.take().unwrap_or_default(),
             ComposeMode::Reply(_) | ComposeMode::Quote(_) => Vec::new(),
         };
         let cursor = text.len();
-        self.composer = Some(Composer { mode, text, cursor, preview: false, sending: false, error: None });
+        self.composer = Some(Composer {
+            mode,
+            text,
+            cursor,
+            preview: false,
+            sending: false,
+            error: None,
+        });
     }
 
     fn submit(&mut self) {
@@ -755,7 +810,10 @@ impl App {
 
         if !signed {
             self.busy = Some("Finding your SSH key…".into());
-            self.cli_job = Some(CliJob { reply_to: parent.map(|p| p.hash()), body });
+            self.cli_job = Some(CliJob {
+                reply_to: parent.map(|p| p.hash()),
+                body,
+            });
             return;
         }
 
@@ -763,7 +821,11 @@ impl App {
         let api = self.api.clone();
         self.spawn(async move {
             let result = api
-                .create_commit(&body, parent.as_ref().map(|p| p.id.as_str()), quoted.as_ref().map(|q| q.id.as_str()))
+                .create_commit(
+                    &body,
+                    parent.as_ref().map(|p| p.id.as_str()),
+                    quoted.as_ref().map(|q| q.id.as_str()),
+                )
                 .await
                 .map_err(|e| e.to_string());
             Msg::Posted(result)
@@ -816,8 +878,17 @@ impl App {
         };
         let authorization = Authorization::new(&self.api.base, &key.fingerprint());
         let opened = system::open(&authorization.url);
-        self.sign_in = Some(SignIn { key, authorization, redeeming: false });
-        self.input = Some(Input { kind: InputKind::SignInCode, text: Vec::new(), cursor: 0, error: None });
+        self.sign_in = Some(SignIn {
+            key,
+            authorization,
+            redeeming: false,
+        });
+        self.input = Some(Input {
+            kind: InputKind::SignInCode,
+            text: Vec::new(),
+            cursor: 0,
+            error: None,
+        });
         if !opened {
             self.toast("Open the sign-in link in your browser (y copies it).");
         }
@@ -849,7 +920,12 @@ impl App {
                 if let Some(sign_in) = self.sign_in.as_mut() {
                     sign_in.redeeming = false;
                 }
-                let input = self.input.get_or_insert(Input { kind: InputKind::SignInCode, text: Vec::new(), cursor: 0, error: None });
+                let input = self.input.get_or_insert(Input {
+                    kind: InputKind::SignInCode,
+                    text: Vec::new(),
+                    cursor: 0,
+                    error: None,
+                });
                 input.error = Some(e);
             }
             Ok(me) => {
@@ -878,7 +954,11 @@ impl App {
         self.feeds.clear();
         let screen = self.screen().clone();
         self.stack.clear();
-        self.navigate(if screen == Screen::Settings { Screen::Settings } else { Screen::Log(Log::Following) });
+        self.navigate(if screen == Screen::Settings {
+            Screen::Settings
+        } else {
+            Screen::Log(Log::Following)
+        });
     }
 
     // Input -----------------------------------------------------------------------------------------------------
@@ -1090,7 +1170,12 @@ impl App {
         match key.code {
             KeyCode::Char('s') if !self.signed() => self.start_sign_in(),
             KeyCode::Char('v') if self.sign_in.is_some() => {
-                self.input = Some(Input { kind: InputKind::SignInCode, text: Vec::new(), cursor: 0, error: None });
+                self.input = Some(Input {
+                    kind: InputKind::SignInCode,
+                    text: Vec::new(),
+                    cursor: 0,
+                    error: None,
+                });
             }
             KeyCode::Char('u') if !self.signed() => self.open_input(InputKind::Username),
             KeyCode::Char('L') if self.signed() => self.confirm = Some(Confirm::SignOut),
@@ -1108,7 +1193,12 @@ impl App {
             _ => Vec::new(),
         };
         let cursor = text.len();
-        self.input = Some(Input { kind, text, cursor, error: None });
+        self.input = Some(Input {
+            kind,
+            text,
+            cursor,
+            error: None,
+        });
     }
 
     fn on_input_key(&mut self, key: KeyEvent) {
@@ -1190,7 +1280,11 @@ impl App {
         }
         let is_uuid = |s: &str| s.len() == 36 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
 
-        let path = query.split("://").nth(1).map(|rest| rest.split_once('/').map(|(_, p)| p).unwrap_or("")).unwrap_or(query);
+        let path = query
+            .split("://")
+            .nth(1)
+            .map(|rest| rest.split_once('/').map(|(_, p)| p).unwrap_or(""))
+            .unwrap_or(query);
         let parts: Vec<&str> = path.split(['/', '?', '#']).filter(|p| !p.is_empty()).collect();
 
         if let Some(id) = parts.iter().find(|p| is_uuid(p)) {
@@ -1204,11 +1298,12 @@ impl App {
     }
 
     fn close_composer(&mut self) {
-        if let Some(composer) = self.composer.take() {
-            if matches!(composer.mode, ComposeMode::New) && !composer.body().is_empty() {
-                self.draft = Some(composer.text);
-                self.toast("Draft kept. c brings it back.");
-            }
+        if let Some(composer) = self.composer.take()
+            && matches!(composer.mode, ComposeMode::New)
+            && !composer.body().is_empty()
+        {
+            self.draft = Some(composer.text);
+            self.toast("Draft kept. c brings it back.");
         }
         self.busy = None;
     }
@@ -1277,7 +1372,12 @@ impl App {
             KeyCode::Left => c.cursor = c.cursor.saturating_sub(1),
             KeyCode::Right => c.cursor = (c.cursor + 1).min(c.text.len()),
             KeyCode::Home => c.cursor = c.text[..c.cursor].iter().rposition(|ch| *ch == '\n').map(|i| i + 1).unwrap_or(0),
-            KeyCode::End => c.cursor += c.text[c.cursor..].iter().position(|ch| *ch == '\n').unwrap_or(c.text.len() - c.cursor),
+            KeyCode::End => {
+                c.cursor += c.text[c.cursor..]
+                    .iter()
+                    .position(|ch| *ch == '\n')
+                    .unwrap_or(c.text.len() - c.cursor)
+            }
             KeyCode::Up | KeyCode::Down => {
                 let line_start = c.text[..c.cursor].iter().rposition(|ch| *ch == '\n').map(|i| i + 1).unwrap_or(0);
                 let column = c.cursor - line_start;
@@ -1285,12 +1385,20 @@ impl App {
                     if line_start == 0 {
                         c.cursor = 0;
                     } else {
-                        let prev_start = c.text[..line_start - 1].iter().rposition(|ch| *ch == '\n').map(|i| i + 1).unwrap_or(0);
+                        let prev_start = c.text[..line_start - 1]
+                            .iter()
+                            .rposition(|ch| *ch == '\n')
+                            .map(|i| i + 1)
+                            .unwrap_or(0);
                         c.cursor = (prev_start + column).min(line_start - 1);
                     }
                 } else if let Some(next) = c.text[c.cursor..].iter().position(|ch| *ch == '\n') {
                     let next_start = c.cursor + next + 1;
-                    let next_end = next_start + c.text[next_start..].iter().position(|ch| *ch == '\n').unwrap_or(c.text.len() - next_start);
+                    let next_end = next_start
+                        + c.text[next_start..]
+                            .iter()
+                            .position(|ch| *ch == '\n')
+                            .unwrap_or(c.text.len() - next_start);
                     c.cursor = (next_start + column).min(next_end);
                 } else {
                     c.cursor = c.text.len();
@@ -1323,14 +1431,22 @@ fn apply(feed: &mut Feed, loaded: Loaded, more: bool) {
             }
             feed.cursor = cursor;
         }
-        Loaded::Thread { ancestors, focus, replies, cursor, notice } => {
+        Loaded::Thread {
+            ancestors,
+            focus,
+            replies,
+            cursor,
+            notice,
+        } => {
             if more {
-                feed.items.extend(replies.into_iter().map(|c| Item::Commit(Box::new(c), Role::Reply)));
+                feed.items
+                    .extend(replies.into_iter().map(|c| Item::Commit(Box::new(c), Role::Reply)));
             } else {
                 let focus_index = ancestors.len();
                 feed.items = ancestors.into_iter().map(|c| Item::Commit(Box::new(c), Role::Ancestor)).collect();
                 feed.items.push(Item::Commit(Box::new(focus), Role::Focus));
-                feed.items.extend(replies.into_iter().map(|c| Item::Commit(Box::new(c), Role::Reply)));
+                feed.items
+                    .extend(replies.into_iter().map(|c| Item::Commit(Box::new(c), Role::Reply)));
                 feed.selected = focus_index;
                 feed.notice = notice;
                 feed.cursor = cursor;
@@ -1377,9 +1493,10 @@ async fn fetch(api: Api, screen: Screen, cursor: Option<String>, signed: bool, g
             };
             guest_following(&api, &username).await.map_err(err)
         }
-        Screen::Log(_) | Screen::Notifications | Screen::Saved if !signed => {
-            Ok(Loaded::Notice(format!("{} needs you to sign in: g s. Until then, Following (1) is built from public commits.", screen.title())))
-        }
+        Screen::Log(_) | Screen::Notifications | Screen::Saved if !signed => Ok(Loaded::Notice(format!(
+            "{} needs you to sign in: g s. Until then, Following (1) is built from public commits.",
+            screen.title()
+        ))),
         Screen::Log(log) => {
             let page = api.log(log, cursor).await.map_err(err)?;
             let mut commits = page.data;
@@ -1415,12 +1532,24 @@ async fn fetch(api: Api, screen: Screen, cursor: Option<String>, signed: bool, g
         Screen::Thread(id) => {
             if cursor.is_some() {
                 let page = api.replies(&id, cursor).await.map_err(err)?;
-                return Ok(Loaded::Thread { ancestors: vec![], focus: Commit::default(), replies: page.data, cursor: page.meta.next_cursor, notice: None });
+                return Ok(Loaded::Thread {
+                    ancestors: vec![],
+                    focus: Commit::default(),
+                    replies: page.data,
+                    cursor: page.meta.next_cursor,
+                    notice: None,
+                });
             }
             let page = api.commit(&id).await.map_err(err)?;
             if signed {
                 let replies = api.replies(&id, None).await.map_err(err)?;
-                return Ok(Loaded::Thread { ancestors: page.ancestors, focus: page.data, replies: replies.data, cursor: replies.meta.next_cursor, notice: None });
+                return Ok(Loaded::Thread {
+                    ancestors: page.ancestors,
+                    focus: page.data,
+                    replies: replies.data,
+                    cursor: replies.meta.next_cursor,
+                    notice: None,
+                });
             }
             // The public API has no replies, but it does say which public commit this one replies to.
             let mut ancestors = Vec::new();
@@ -1435,7 +1564,13 @@ async fn fetch(api: Api, screen: Screen, cursor: Option<String>, signed: bool, g
                 }
             }
             let notice = (page.data.replies_count.unwrap_or(0) > 0).then(|| "Sign in to read the replies (g s).".to_string());
-            Ok(Loaded::Thread { ancestors, focus: page.data, replies: vec![], cursor: None, notice })
+            Ok(Loaded::Thread {
+                ancestors,
+                focus: page.data,
+                replies: vec![],
+                cursor: None,
+                notice,
+            })
         }
         Screen::Settings => Err(String::new()),
     }
@@ -1450,7 +1585,7 @@ async fn guest_following(api: &Api, username: &str) -> anyhow::Result<Loaded> {
 
     let pages = futures::future::join_all(names.iter().map(|name| api.user_commits(name, false, None))).await;
     let mut commits: Vec<Commit> = pages.into_iter().filter_map(Result::ok).flat_map(|p| p.data).collect();
-    commits.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    commits.sort_by_key(|c| std::cmp::Reverse(c.created_at));
     commits.truncate(100);
     Ok(Loaded::Commits(commits, None))
 }

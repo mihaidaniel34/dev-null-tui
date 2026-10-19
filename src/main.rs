@@ -1,3 +1,6 @@
+// Messages and loaded pages are made once per response, so a large variant costs nothing worth boxing for.
+#![allow(clippy::large_enum_variant)]
+
 mod api;
 mod app;
 mod auth;
@@ -58,7 +61,11 @@ async fn main() -> Result<()> {
     }
 
     let config = Config::load();
-    let key = config.signed_in.then(|| DeviceKey::load(&config::key_path())).flatten().map(Arc::new);
+    let key = config
+        .signed_in
+        .then(|| DeviceKey::load(&config::key_path()))
+        .flatten()
+        .map(Arc::new);
     let api = Api::new(config::base_url(), key);
 
     if args.first().map(String::as_str) == Some("commit") {
@@ -80,7 +87,11 @@ async fn commit_from_shell(api: Api, body: String) -> Result<()> {
     if api.is_signed() {
         let commit = api.create_commit(&body, None, None).await?;
         let pending = commit.status.as_deref() == Some("pending");
-        println!("Committed: {}{}", commit.html_url.unwrap_or_default(), if pending { " (pending review)" } else { "" });
+        println!(
+            "Committed: {}{}",
+            commit.html_url.unwrap_or_default(),
+            if pending { " (pending review)" } else { "" }
+        );
         return Ok(());
     }
     let key = cli_commit::find_key(&api).await?;
@@ -96,7 +107,10 @@ fn setup() -> Result<Term> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
     // Lets terminals that can tell ⌃↵ from ↵ do so, for committing from the composer.
     if supports_keyboard_enhancement().unwrap_or(false) {
-        let _ = execute!(stdout, PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+        let _ = execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
     }
 
     let default_hook = std::panic::take_hook();
@@ -113,7 +127,13 @@ fn leave() -> Result<()> {
     if supports_keyboard_enhancement().unwrap_or(false) {
         let _ = execute!(stdout, PopKeyboardEnhancementFlags);
     }
-    execute!(stdout, DisableBracketedPaste, DisableMouseCapture, LeaveAlternateScreen, crossterm::cursor::Show)?;
+    execute!(
+        stdout,
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        LeaveAlternateScreen,
+        crossterm::cursor::Show
+    )?;
     disable_raw_mode()?;
     Ok(())
 }
@@ -177,7 +197,10 @@ async fn cli_commit(terminal: &mut Term, app: &App, job: CliJob) -> Result<Strin
         enable_raw_mode()?;
         execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
         if supports_keyboard_enhancement().unwrap_or(false) {
-            let _ = execute!(io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+            let _ = execute!(
+                io::stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
         }
         terminal.clear()?;
         signature?

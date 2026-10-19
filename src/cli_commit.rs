@@ -50,7 +50,9 @@ fn agent_keys() -> Vec<String> {
 
 /// Public keys in ~/.ssh that have their private key next to them.
 fn file_keys() -> Vec<(String, PathBuf)> {
-    let Some(ssh) = dirs::home_dir().map(|h| h.join(".ssh")) else { return vec![] };
+    let Some(ssh) = dirs::home_dir().map(|h| h.join(".ssh")) else {
+        return vec![];
+    };
     let Ok(entries) = fs::read_dir(&ssh) else { return vec![] };
     let mut keys: Vec<(String, PathBuf)> = entries
         .flatten()
@@ -67,7 +69,14 @@ fn file_keys() -> Vec<(String, PathBuf)> {
 
 /// Asks /dev/null which local key is on a user's GitHub account, and only ever signs with one of our own.
 pub async fn find_key(api: &Api) -> Result<SigningKey> {
-    if Command::new("ssh-keygen").arg("-?").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
+    if Command::new("ssh-keygen")
+        .arg("-?")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_err()
+    {
         bail!("ssh-keygen is required to commit without signing in.");
     }
 
@@ -98,7 +107,12 @@ pub async fn find_key(api: &Api) -> Result<SigningKey> {
         bail!("{}", plain_message(&text, status.as_u16()));
     }
 
-    let key = text.lines().next().and_then(key_id).filter(|k| candidates.contains(k)).ok_or_else(|| anyhow!("Unexpected answer from {}.", api.base))?;
+    let key = text
+        .lines()
+        .next()
+        .and_then(key_id)
+        .filter(|k| candidates.contains(k))
+        .ok_or_else(|| anyhow!("Unexpected answer from {}.", api.base))?;
 
     let tmp_dir = std::env::temp_dir().join(format!("devnull.{}", random_hex(5)));
     create_private_dir(&tmp_dir)?;
@@ -106,18 +120,37 @@ pub async fn find_key(api: &Api) -> Result<SigningKey> {
     if agent.contains(&key) {
         let path = tmp_dir.join("key.pub");
         fs::write(&path, format!("{key}\n"))?;
-        return Ok(SigningKey { path, needs_terminal: false, label: "your SSH agent".into(), tmp_dir });
+        return Ok(SigningKey {
+            path,
+            needs_terminal: false,
+            label: "your SSH agent".into(),
+            tmp_dir,
+        });
     }
 
-    let (_, path) = files.into_iter().find(|(id, _)| *id == key).ok_or_else(|| anyhow!("Could not find the private key of {key}."))?;
-    let label = path.display().to_string().replace(&dirs::home_dir().unwrap_or_default().display().to_string(), "~");
-    Ok(SigningKey { path, needs_terminal: true, label, tmp_dir })
+    let (_, path) = files
+        .into_iter()
+        .find(|(id, _)| *id == key)
+        .ok_or_else(|| anyhow!("Could not find the private key of {key}."))?;
+    let label = path
+        .display()
+        .to_string()
+        .replace(&dirs::home_dir().unwrap_or_default().display().to_string(), "~");
+    Ok(SigningKey {
+        path,
+        needs_terminal: true,
+        label,
+        tmp_dir,
+    })
 }
 
 #[cfg(unix)]
 fn create_private_dir(path: &PathBuf) -> Result<()> {
     use std::os::unix::fs::DirBuilderExt;
-    fs::DirBuilder::new().mode(0o700).create(path).context("Could not create a private temporary directory.")
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(path)
+        .context("Could not create a private temporary directory.")
 }
 
 #[cfg(not(unix))]
@@ -127,7 +160,13 @@ fn create_private_dir(path: &PathBuf) -> Result<()> {
 
 /// "<unix timestamp>\n<nonce>\n<commit to reply to, or empty>\n<body>"
 pub fn payload(reply_to: Option<&str>, body: &str) -> String {
-    format!("{}\n{}\n{}\n{}", chrono::Utc::now().timestamp(), random_hex(16), reply_to.unwrap_or(""), body)
+    format!(
+        "{}\n{}\n{}\n{}",
+        chrono::Utc::now().timestamp(),
+        random_hex(16),
+        reply_to.unwrap_or(""),
+        body
+    )
 }
 
 /// Runs `ssh-keygen -Y sign`. Blocks, and may prompt for a passphrase when `needs_terminal`: ssh-keygen asks on
@@ -182,13 +221,17 @@ pub async fn send(api: &Api, payload: String, signature: String) -> Result<Strin
 
 /// The CLI endpoints answer in plain text, or JSON for validation errors.
 fn plain_message(text: &str, status: u16) -> String {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
-        if let Some(message) = value.get("message").and_then(|m| m.as_str()) {
-            return sanitize(message);
-        }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(text)
+        && let Some(message) = value.get("message").and_then(|m| m.as_str())
+    {
+        return sanitize(message);
     }
     let text = sanitize(text.trim());
-    if text.is_empty() || text.starts_with('<') { format!("/dev/null answered HTTP {status}.") } else { text }
+    if text.is_empty() || text.starts_with('<') {
+        format!("/dev/null answered HTTP {status}.")
+    } else {
+        text
+    }
 }
 
 fn sanitize(text: &str) -> String {

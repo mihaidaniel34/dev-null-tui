@@ -73,14 +73,21 @@ impl Api {
     }
 
     pub fn with_key(&self, key: Option<Arc<DeviceKey>>) -> Self {
-        Self { http: self.http.clone(), base: self.base.clone(), key }
+        Self {
+            http: self.http.clone(),
+            base: self.base.clone(),
+            key,
+        }
     }
 
     /// Sends a request, signed when there is a device key: the timestamp, nonce, method, path with its query exactly
     /// as sent, and raw body, joined by newlines.
     async fn send(&self, method: Method, path: &str, body: Option<Value>, sign_with: Option<&DeviceKey>) -> Result<(StatusCode, Vec<u8>)> {
         let raw = body.map(|b| b.to_string()).unwrap_or_default();
-        let mut request = self.http.request(method.clone(), format!("{}{}", self.base, path)).header("Accept", "application/json");
+        let mut request = self
+            .http
+            .request(method.clone(), format!("{}{}", self.base, path))
+            .header("Accept", "application/json");
 
         if !raw.is_empty() {
             request = request.header("Content-Type", "application/json").body(raw.clone());
@@ -98,19 +105,31 @@ impl Api {
 
         let response = request.send().await.map_err(|e| ApiError {
             code: None,
-            message: if e.is_timeout() { "/dev/null took too long to answer.".into() } else { format!("Could not reach {}.", self.base) },
+            message: if e.is_timeout() {
+                "/dev/null took too long to answer.".into()
+            } else {
+                format!("Could not reach {}.", self.base)
+            },
         })?;
         let status = response.status();
         let bytes = response.bytes().await?.to_vec();
 
         if !status.is_success() {
             let body: Option<ApiErrorBody> = serde_json::from_slice(&bytes).ok();
-            let message = body.as_ref().and_then(|b| b.message.clone()).filter(|m| !m.is_empty()).unwrap_or_else(|| match status.as_u16() {
-                404 => "Not found.".into(),
-                429 => "Slow down: too many requests. Try again in a minute.".into(),
-                s => format!("/dev/null answered HTTP {s}."),
-            });
-            return Err(ApiError { code: body.and_then(|b| b.code), message }.into());
+            let message = body
+                .as_ref()
+                .and_then(|b| b.message.clone())
+                .filter(|m| !m.is_empty())
+                .unwrap_or_else(|| match status.as_u16() {
+                    404 => "Not found.".into(),
+                    429 => "Slow down: too many requests. Try again in a minute.".into(),
+                    s => format!("/dev/null answered HTTP {s}."),
+                });
+            return Err(ApiError {
+                code: body.and_then(|b| b.code),
+                message,
+            }
+            .into());
         }
 
         Ok((status, bytes))
@@ -155,7 +174,11 @@ impl Api {
     }
 
     pub async fn user_commits(&self, username: &str, replies: bool, cursor: Option<&str>) -> Result<Page<Commit>> {
-        let path = format!("/api/v1/users/{}/commits{}", encode(username), if replies { "?replies=1" } else { "" });
+        let path = format!(
+            "/api/v1/users/{}/commits{}",
+            encode(username),
+            if replies { "?replies=1" } else { "" }
+        );
         self.get(&Self::cursor(path, cursor)).await
     }
 
@@ -168,7 +191,8 @@ impl Api {
     }
 
     pub async fn replies(&self, id: &str, cursor: Option<&str>) -> Result<Page<Commit>> {
-        self.get(&Self::cursor(format!("/api/v1/commits/{}/replies", encode(id)), cursor)).await
+        self.get(&Self::cursor(format!("/api/v1/commits/{}/replies", encode(id)), cursor))
+            .await
     }
 
     pub async fn saved(&self, cursor: Option<&str>) -> Result<Page<Commit>> {
@@ -187,7 +211,10 @@ impl Api {
         if let Some(id) = quoted_commit_id {
             payload["quoted_commit_id"] = json!(id);
         }
-        Ok(self.write::<Data<Commit>>(Method::POST, "/api/v1/commits", Some(payload)).await?.data)
+        Ok(self
+            .write::<Data<Commit>>(Method::POST, "/api/v1/commits", Some(payload))
+            .await?
+            .data)
     }
 
     pub async fn delete_commit(&self, id: &str) -> Result<()> {
@@ -196,21 +223,31 @@ impl Api {
 
     pub async fn star(&self, id: &str, on: bool) -> Result<Commit> {
         let method = if on { Method::POST } else { Method::DELETE };
-        Ok(self.write::<Data<Commit>>(method, &format!("/api/v1/commits/{}/star", encode(id)), None).await?.data)
+        Ok(self
+            .write::<Data<Commit>>(method, &format!("/api/v1/commits/{}/star", encode(id)), None)
+            .await?
+            .data)
     }
 
     pub async fn save(&self, id: &str, on: bool) -> Result<Commit> {
         let method = if on { Method::PUT } else { Method::DELETE };
-        Ok(self.write::<Data<Commit>>(method, &format!("/api/v1/commits/{}/bookmark", encode(id)), None).await?.data)
+        Ok(self
+            .write::<Data<Commit>>(method, &format!("/api/v1/commits/{}/bookmark", encode(id)), None)
+            .await?
+            .data)
     }
 
     pub async fn pastel(&self, id: &str) -> Result<Commit> {
-        Ok(self.write::<Data<Commit>>(Method::POST, &format!("/api/v1/commits/{}/pasteis", encode(id)), None).await?.data)
+        Ok(self
+            .write::<Data<Commit>>(Method::POST, &format!("/api/v1/commits/{}/pasteis", encode(id)), None)
+            .await?
+            .data)
     }
 
     pub async fn follow(&self, username: &str, on: bool) -> Result<()> {
         let method = if on { Method::POST } else { Method::DELETE };
-        self.write_empty(method, &format!("/api/v1/users/{}/follow", encode(username))).await
+        self.write_empty(method, &format!("/api/v1/users/{}/follow", encode(username)))
+            .await
     }
 
     /// Redeems the code from the authorize page, signed with the key that isn't approved yet.
@@ -226,7 +263,9 @@ impl Api {
 }
 
 pub fn encode(segment: &str) -> String {
-    url::form_urlencoded::byte_serialize(segment.as_bytes()).collect::<String>().replace('+', "%20")
+    url::form_urlencoded::byte_serialize(segment.as_bytes())
+        .collect::<String>()
+        .replace('+', "%20")
 }
 
 pub fn api_error(err: &anyhow::Error) -> Option<&ApiError> {

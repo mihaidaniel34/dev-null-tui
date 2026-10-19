@@ -42,5 +42,8 @@ impl Config {
 }
 
 pub fn base_url() -> String {
-    std::env::var("DEVNULL_URL").unwrap_or_else(|_| DEFAULT_URL.to_string()).trim_end_matches('/').to_string()
+    std::env::var("DEVNULL_URL")
+        .unwrap_or_else(|_| DEFAULT_URL.to_string())
+        .trim_end_matches('/')
+        .to_string()
 }

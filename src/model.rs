@@ -185,7 +185,10 @@ impl Commit {
     /// Takes what a star, save or pastel answered with, keeping what that answer leaves out.
     pub fn merge(&mut self, fresh: Commit) {
         let reply_preview = self.reply_preview.take();
-        *self = Commit { reply_preview: fresh.reply_preview.clone().or(reply_preview), ..fresh };
+        *self = Commit {
+            reply_preview: fresh.reply_preview.clone().or(reply_preview),
+            ..fresh
+        };
     }
 }
 

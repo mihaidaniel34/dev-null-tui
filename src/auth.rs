@@ -47,7 +47,10 @@ impl DeviceKey {
 
     /// `ssh-keygen -Y sign -n <namespace>`, as base64 on one line.
     pub fn sign(&self, namespace: &str, message: &[u8]) -> Result<String> {
-        let signature = self.key.sign(namespace, HashAlg::Sha512, message).map_err(|e| anyhow!("Could not sign: {e}"))?;
+        let signature = self
+            .key
+            .sign(namespace, HashAlg::Sha512, message)
+            .map_err(|e| anyhow!("Could not sign: {e}"))?;
         let pem = signature.to_pem(LineEnding::LF).map_err(|e| anyhow!("{e}"))?;
         Ok(pem.lines().filter(|line| !line.starts_with("-----")).collect())
     }
@@ -57,7 +60,12 @@ impl DeviceKey {
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let mut file = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path).context("Could not save the device key")?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .context("Could not save the device key")?;
     file.write_all(bytes)?;
     Ok(())
 }
@@ -89,7 +97,11 @@ impl Authorization {
         let state = random_hex(16);
 
         let host = hostname();
-        let device_name = if host.is_empty() { "devnull TUI".to_string() } else { format!("devnull TUI on {host}") };
+        let device_name = if host.is_empty() {
+            "devnull TUI".to_string()
+        } else {
+            format!("devnull TUI on {host}")
+        };
 
         let mut url = url::Url::parse(&format!("{base_url}/mobile/authorize")).expect("valid base URL");
         url.query_pairs_mut()
@@ -100,7 +112,11 @@ impl Authorization {
             .append_pair("state", &state)
             .append_pair("redirect_uri", REDIRECT_URI);
 
-        Self { verifier, state, url: url.into() }
+        Self {
+            verifier,
+            state,
+            url: url.into(),
+        }
     }
 
     /// Takes the `devnull://auth/callback?code=…&state=…` link the browser was sent to, or just the code.
@@ -118,7 +134,11 @@ impl Authorization {
         let get = |name: &str| pairs.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
 
         if let Some(error) = get("error") {
-            bail!(if error == "access_denied" { "You cancelled the sign-in.".to_string() } else { format!("Sign-in failed: {error}") });
+            bail!(if error == "access_denied" {
+                "You cancelled the sign-in.".to_string()
+            } else {
+                format!("Sign-in failed: {error}")
+            });
         }
         if get("state").as_deref() != Some(self.state.as_str()) {
             bail!("That link is from another sign-in. Start again.");
@@ -132,7 +152,10 @@ fn hostname() -> String {
         .ok()
         .or_else(|| fs::read_to_string("/etc/hostname").ok())
         .or_else(|| {
-            std::process::Command::new("hostname").output().ok().and_then(|o| String::from_utf8(o.stdout).ok())
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
         })
         .map(|h| h.trim().trim_end_matches(".local").to_string())
         .unwrap_or_default()

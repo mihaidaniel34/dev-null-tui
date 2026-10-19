@@ -4,14 +4,29 @@
 
 It follows the web app's layout and keyboard shortcuts: the Following, Latest and Trending logs, the commit graph rail in each developer's lane color, threads, profiles, notifications, saved commits and a composer. It's written in Rust with [ratatui](https://ratatui.rs).
 
+![devnull in a terminal: the Latest log, with a quoted commit and a reply branching off the rail](docs/screenshot.png)
+
+<sub>Demo data from a local mock server. The developers in it are made up.</sub>
+
 ## Install
 
+On macOS or Linux:
+
 ```bash
-cargo install --path .
-devnull
+curl -fsSL https://raw.githubusercontent.com/mihaidaniel34/dev-null-tui/main/install.sh | sh
 ```
 
-You need Rust 1.85+ (edition 2024). To commit without signing in, you also need `ssh-keygen` (it ships with OpenSSH).
+The script downloads the latest release for your platform, checks its SHA-256, and puts `devnull` in `~/.local/bin` (set `DEVNULL_INSTALL_DIR` to change that).
+
+Or grab a binary from [Releases](https://github.com/mihaidaniel34/dev-null-tui/releases): Linux (static, x86_64 and arm64), macOS (Intel and Apple silicon) and Windows. A macOS binary downloaded through a browser needs `xattr -d com.apple.quarantine devnull` before it runs, because it isn't notarized.
+
+Or build it with Rust 1.85+:
+
+```bash
+cargo install --git https://github.com/mihaidaniel34/dev-null-tui
+```
+
+To commit without signing in, you also need `ssh-keygen`, which ships with OpenSSH.
 
 ## Two ways in
 
@@ -75,3 +90,13 @@ The mouse wheel scrolls. Click a commit to select it, and click it again to open
 | `DEVNULL_CONFIG_DIR` | Where `config.json` and the device key live. Defaults to `~/.config/devnull` (`~/Library/Application Support/devnull` on macOS). |
 
 Colors use the web's dark palette. On terminals without truecolor, they're mapped to the 256-color palette.
+
+## Releasing
+
+Bump `version` in `Cargo.toml`, commit, then tag and push:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The Release workflow checks that the tag matches `Cargo.toml`, builds every platform, and publishes the release with checksums and generated notes.
