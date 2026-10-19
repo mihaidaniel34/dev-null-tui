@@ -53,6 +53,11 @@ pub struct User {
     /// A lane from 0 to 5, or a custom `#rrggbb`. Only signed requests get it.
     #[serde(default)]
     pub lane: Option<Value>,
+    /// In a signed list of people: whether the user follows each one, and whether each one follows them.
+    #[serde(default)]
+    pub is_followed: Option<bool>,
+    #[serde(default)]
+    pub follows_you: Option<bool>,
 }
 
 impl User {
@@ -71,6 +76,69 @@ pub struct Profile {
     pub follows_you: Option<bool>,
     #[serde(default)]
     pub pinned_commit: Option<Commit>,
+    #[serde(default)]
+    pub is_muting: Option<bool>,
+    #[serde(default)]
+    pub activity: Option<Activity>,
+    #[serde(default)]
+    pub streaks: Option<Streaks>,
+    #[serde(default)]
+    pub achievements: Option<Achievements>,
+}
+
+/// Commits per hour (scale "day") or per day (week, month, year), oldest first. The year starts on a Sunday.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Activity {
+    #[serde(default)]
+    pub scale: String,
+    #[serde(default)]
+    pub buckets: Vec<Bucket>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Bucket {
+    #[serde(default)]
+    pub date: String,
+    #[serde(default)]
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Streaks {
+    #[serde(default)]
+    pub current: u64,
+    #[serde(default)]
+    pub longest: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Achievements {
+    #[serde(default)]
+    pub level: u64,
+    #[serde(default)]
+    pub rank: String,
+    #[serde(default)]
+    pub xp: i64,
+    #[serde(default)]
+    pub next_level_xp: Option<i64>,
+    #[serde(default)]
+    pub level_progress: u64,
+    #[serde(default)]
+    pub badges: Vec<Badge>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Badge {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub unlocked: bool,
+    #[serde(default)]
+    pub progress: u64,
+    #[serde(default)]
+    pub target: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -81,6 +149,13 @@ pub struct CurrentUser {
     pub pasteis_mode: bool,
     #[serde(default)]
     pub pasteis_remaining: Option<u64>,
+    /// A lane from 0 to 5, a custom `#rrggbb`, or null for Automatic.
+    #[serde(default)]
+    pub preferred_lane: Option<Value>,
+    #[serde(default)]
+    pub automatic_lane: Option<u8>,
+    #[serde(default)]
+    pub github_synced_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -172,6 +247,30 @@ pub struct Commit {
     pub poll: Option<Poll>,
     #[serde(default)]
     pub reply_preview: Option<ReplyPreview>,
+    /// The body split into prose, inline code and code blocks the server highlighted. Signed requests only.
+    #[serde(default)]
+    pub body_segments: Option<Vec<Segment>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Segment {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    /// A block's code, as HTML spans with tempest/highlight's `hl-*` classes.
+    #[serde(default)]
+    pub html: Option<String>,
+}
+
+impl Commit {
+    /// Each code block's highlighted HTML, in order, when the server sent them.
+    pub fn highlighted_blocks(&self) -> Vec<String> {
+        self.body_segments
+            .iter()
+            .flatten()
+            .filter(|s| s.kind == "block")
+            .map(|s| s.html.clone().unwrap_or_default())
+            .collect()
+    }
 }
 
 impl Commit {

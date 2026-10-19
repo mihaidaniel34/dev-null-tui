@@ -41,6 +41,24 @@ impl Config {
     }
 }
 
+/// A commit being written, kept across restarts.
+pub fn load_draft() -> Option<String> {
+    fs::read_to_string(dir().join("draft.txt")).ok().filter(|d| !d.trim().is_empty())
+}
+
+pub fn save_draft(draft: Option<&str>) {
+    let path = dir().join("draft.txt");
+    match draft.filter(|d| !d.trim().is_empty()) {
+        Some(draft) => {
+            let _ = fs::create_dir_all(dir());
+            let _ = fs::write(path, draft);
+        }
+        None => {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 pub fn base_url() -> String {
     std::env::var("DEVNULL_URL")
         .unwrap_or_else(|_| DEFAULT_URL.to_string())

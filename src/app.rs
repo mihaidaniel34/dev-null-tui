@@ -20,10 +20,10 @@ const NEW_COMMITS_EVERY: Duration = Duration::from_secs(60);
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Screen {
     Log(Log),
-    Notifications,
+    Notifications(Filter),
     Saved,
-    /// A profile, on its Commits or Replies tab.
-    Profile(String, bool),
+    /// A profile, on one of its tabs.
+    Profile(String, Tab),
     Thread(String),
     Settings,
 }
@@ -32,12 +32,85 @@ impl Screen {
     pub fn title(&self) -> String {
         match self {
             Screen::Log(log) => log.title().into(),
-            Screen::Notifications => "Notifications".into(),
+            Screen::Notifications(_) => "Notifications".into(),
             Screen::Saved => "Saved".into(),
             Screen::Profile(username, _) => format!("@{username}"),
             Screen::Thread(_) => "Commit".into(),
             Screen::Settings => "Settings".into(),
         }
+    }
+}
+
+/// The web's notification filters.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Filter {
+    All,
+    Replies,
+    Mentions,
+    Quotes,
+    Stars,
+    Follows,
+    Moderation,
+}
+
+impl Filter {
+    pub const ALL: [Filter; 7] = [
+        Filter::All,
+        Filter::Replies,
+        Filter::Mentions,
+        Filter::Quotes,
+        Filter::Stars,
+        Filter::Follows,
+        Filter::Moderation,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Filter::All => "All",
+            Filter::Replies => "Replies",
+            Filter::Mentions => "Mentions",
+            Filter::Quotes => "Quotes",
+            Filter::Stars => "Stars",
+            Filter::Follows => "Follows",
+            Filter::Moderation => "Moderation",
+        }
+    }
+
+    pub fn query(self) -> &'static str {
+        match self {
+            Filter::All => "all",
+            Filter::Replies => "replies",
+            Filter::Mentions => "mentions",
+            Filter::Quotes => "quotes",
+            Filter::Stars => "stars",
+            Filter::Follows => "follows",
+            Filter::Moderation => "moderation",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Tab {
+    Commits,
+    Replies,
+    Followers,
+    Following,
+}
+
+impl Tab {
+    pub const ALL: [Tab; 4] = [Tab::Commits, Tab::Replies, Tab::Followers, Tab::Following];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Tab::Commits => "Commits",
+            Tab::Replies => "Replies",
+            Tab::Followers => "Followers",
+            Tab::Following => "Following",
+        }
+    }
+
+    pub fn is_people(self) -> bool {
+        matches!(self, Tab::Followers | Tab::Following)
     }
 }
 
@@ -54,6 +127,7 @@ pub enum Role {
 pub enum Item {
     Commit(Box<Commit>, Role),
     Notification(Box<Notification>),
+    User(Box<User>),
 }
 
 impl Item {
@@ -61,6 +135,7 @@ impl Item {
         match self {
             Item::Commit(c, _) => Some(c),
             Item::Notification(n) => n.commit.as_ref(),
+            Item::User(_) => None,
         }
     }
 }
@@ -97,7 +172,8 @@ pub enum Loaded {
         cursor: Option<String>,
         notice: Option<String>,
     },
-    Profile(Profile, Vec<Commit>, Option<String>),
+    Profile(Profile, Vec<Item>, Option<String>),
+    People(Vec<User>, Option<String>),
     /// Nothing to load, and why.
     Notice(String),
 }
@@ -128,6 +204,16 @@ pub enum Msg {
     },
     SignedIn(Result<CurrentUser, String>),
     Toast(String, bool),
+    /// The signed-in user, after changing a setting.
+    MeUpdated(Result<CurrentUser, String>, String),
+    Muted {
+        username: String,
+        on: bool,
+    },
+    Blocked {
+        username: String,
+        on: bool,
+    },
     /// A picture is ready to send to the terminal, or couldn't be had.
     Picture(crate::gfx::Key, Option<Vec<u8>>),
 }
@@ -152,9 +238,25 @@ pub struct Composer {
     pub preview: bool,
     pub sending: bool,
     pub error: Option<String>,
+    /// Which suggestion is picked while completing an @mention.
+    pub mention_index: usize,
 }
 
 impl Composer {
+    /// The @mention being typed at the cursor: where its @ is, and what follows it so far.
+    pub fn mention(&self) -> Option<(usize, String)> {
+        let mut start = self.cursor;
+        while start > 0 && (self.text[start - 1].is_ascii_alphanumeric() || matches!(self.text[start - 1], '-' | '_')) {
+            start -= 1;
+        }
+        let at = start.checked_sub(1)?;
+        // An email address isn't a mention.
+        if self.text[at] != '@' || (at > 0 && self.text[at - 1].is_alphanumeric()) {
+            return None;
+        }
+        Some((at, self.text[start..self.cursor].iter().collect()))
+    }
+
     pub fn body(&self) -> String {
         self.text.iter().collect::<String>().trim().to_string()
     }
@@ -165,6 +267,7 @@ pub enum InputKind {
     Go,
     Username,
     SignInCode,
+    LaneColor,
 }
 
 pub struct Input {
@@ -177,13 +280,30 @@ pub struct Input {
 pub enum Confirm {
     Delete(Commit),
     SignOut,
+    Mute(String, bool),
+    Block(String, bool),
+    /// Picks a reason, by number, then reports.
+    Report(Commit),
 }
+
+pub const REPORT_REASONS: [(&str, &str); 4] = [
+    ("spam", "Spam"),
+    ("harassment", "Harassment or hate"),
+    ("unsafe", "Unsafe or illegal"),
+    ("other", "Something else"),
+];
 
 /// A commit to send through /api/cli/commits, which the main loop runs, since ssh-keygen may need the terminal.
 pub struct CliJob {
     pub reply_to: Option<String>,
     pub body: String,
     pub images: Vec<Attachment>,
+}
+
+pub struct Viewer {
+    pub images: Vec<Image>,
+    pub index: usize,
+    pub author: String,
 }
 
 pub struct SignIn {
@@ -208,6 +328,12 @@ pub struct App {
     pub input: Option<Input>,
     pub confirm: Option<Confirm>,
     pub help: bool,
+    /// The profile's achievements, opened with A.
+    pub achievements: bool,
+    /// A commit's images, full size, opened with v.
+    pub viewer: Option<Viewer>,
+    /// The lane being picked in Settings, 0 to 5, or 6 for Automatic, before it's saved.
+    pub lane_pick: Option<usize>,
     pub help_scroll: usize,
     pub pending_g: bool,
     pub toast: Option<(String, bool, Instant)>,
@@ -231,11 +357,14 @@ impl App {
             feeds: HashMap::new(),
             log: Log::Latest,
             composer: None,
-            draft: None,
+            draft: config::load_draft().map(|d| d.chars().collect()),
             draft_images: Vec::new(),
             input: None,
             confirm: None,
             help: false,
+            achievements: false,
+            lane_pick: None,
+            viewer: None,
             help_scroll: 0,
             pending_g: false,
             toast: None,
@@ -433,6 +562,15 @@ impl App {
             Msg::Posted(result) => self.on_posted(result),
             Msg::Followed { username, on, result } => match result {
                 Ok(()) => {
+                    for feed in self.feeds.values_mut() {
+                        for item in feed.items.iter_mut() {
+                            if let Item::User(user) = item
+                                && user.username == username
+                            {
+                                user.is_followed = Some(on);
+                            }
+                        }
+                    }
                     for (screen, feed) in self.feeds.iter_mut() {
                         if matches!(screen, Screen::Profile(u, _) if *u == username)
                             && let Some(profile) = feed.profile.as_mut()
@@ -460,6 +598,47 @@ impl App {
             Msg::SignedIn(result) => self.on_signed_in(result),
             Msg::Toast(message, error) => self.toast = Some((message, error, Instant::now())),
             Msg::Picture(key, png) => crate::gfx::loaded(key, png),
+            Msg::MeUpdated(result, done) => {
+                self.busy = None;
+                match result {
+                    Ok(me) => {
+                        self.lane_pick = None;
+                        self.recolor(&me.user);
+                        self.me = Some(me);
+                        self.toast(done);
+                    }
+                    Err(e) => self.error(e),
+                }
+            }
+            Msg::Muted { username, on } => {
+                for (screen, feed) in self.feeds.iter_mut() {
+                    if matches!(screen, Screen::Profile(u, _) if *u == username)
+                        && let Some(profile) = feed.profile.as_mut()
+                    {
+                        profile.is_muting = Some(on);
+                    }
+                }
+                // Logs leave a muted developer out, so they're read again.
+                self.feeds.retain(|screen, _| !matches!(screen, Screen::Log(_)));
+            }
+            Msg::Blocked { username, on } => {
+                // Blocking ends the follows both ways and hides each from the other: start the logs over, and leave.
+                self.feeds
+                    .retain(|screen, _| !matches!(screen, Screen::Log(_) | Screen::Profile(..)));
+                self.stack
+                    .retain(|screen| !matches!(screen, Screen::Profile(u, _) if *u == username));
+                if self.stack.is_empty() {
+                    self.stack.push(Screen::Log(self.log));
+                }
+                let screen = self.screen().clone();
+                self.feeds.remove(&screen);
+                self.navigate(screen);
+                self.toast(if on {
+                    format!("Blocked @{username}.")
+                } else {
+                    format!("Unblocked @{username}.")
+                });
+            }
         }
     }
 
@@ -478,6 +657,7 @@ impl App {
                             patch(c)
                         }
                     }
+                    Item::User(_) => {}
                 }
             }
             for replies in feed.replies.values_mut() {
@@ -497,6 +677,7 @@ impl App {
                 let mode = composer.mode.clone();
                 self.composer = None;
                 self.draft = None;
+                config::save_draft(None);
                 self.draft_images.clear();
                 self.toast(if pending {
                     "Committed. Pending review: only you can see it until it's approved."
@@ -604,15 +785,19 @@ impl App {
         let Some(feed) = self.feed() else { return };
         let Some(item) = feed.items.get(feed.selected) else { return };
         match item {
+            Item::User(user) => {
+                let username = user.username.clone();
+                self.navigate(Screen::Profile(username, Tab::Commits));
+            }
             Item::Notification(n) if n.kind == "followed" => {
                 if let Some(actor) = &n.actor {
                     let username = actor.username.clone();
-                    self.navigate(Screen::Profile(username, false));
+                    self.navigate(Screen::Profile(username, Tab::Commits));
                 }
             }
             Item::Commit(_, Role::Focus) => {
                 if let Some(author) = self.selected_commit().and_then(|c| c.author) {
-                    self.navigate(Screen::Profile(author.username, false));
+                    self.navigate(Screen::Profile(author.username, Tab::Commits));
                 }
             }
             _ => {
@@ -628,9 +813,10 @@ impl App {
         let author = feed.and_then(|f| f.items.get(f.selected)).and_then(|item| match item {
             Item::Notification(n) => n.actor.clone(),
             Item::Commit(c, _) => c.author.clone(),
+            Item::User(u) => Some((**u).clone()),
         });
         if let Some(author) = author {
-            self.navigate(Screen::Profile(author.username, false));
+            self.navigate(Screen::Profile(author.username, Tab::Commits));
         }
     }
 
@@ -733,6 +919,23 @@ impl App {
     }
 
     fn follow(&mut self) {
+        // In a list of people, the selected one.
+        let selected_user = self.feed().and_then(|f| f.items.get(f.selected)).and_then(|item| match item {
+            Item::User(u) => Some((**u).clone()),
+            _ => None,
+        });
+        if let Some(user) = selected_user {
+            if self.needs_sign_in("follow people") || self.username().as_deref() == Some(user.username.as_str()) {
+                return;
+            }
+            let on = !user.is_followed.unwrap_or(false);
+            let (api, username) = (self.api.clone(), user.username);
+            self.spawn(async move {
+                let result = api.follow(&username, on).await.map_err(|e| e.to_string());
+                Msg::Followed { username, on, result }
+            });
+            return;
+        }
         let Screen::Profile(username, _) = self.screen().clone() else {
             self.toast("Open a profile to follow someone (enter on their name, or /).");
             return;
@@ -752,6 +955,91 @@ impl App {
         self.spawn(async move {
             let result = api.follow(&username, on).await.map_err(|e| e.to_string());
             Msg::Followed { username, on, result }
+        });
+    }
+
+    /// Opens the selected commit's images full size, or in the browser where the terminal can't show pictures.
+    fn view_images(&mut self) {
+        let Some(commit) = self.selected_commit() else { return };
+        let images: Vec<Image> = commit.images.unwrap_or_default().into_iter().filter(|i| i.url.is_some()).collect();
+        if images.is_empty() {
+            self.toast("That commit has no images.");
+            return;
+        }
+        if !crate::gfx::enabled() {
+            if let Some(url) = &images[0].url
+                && system::open(url)
+            {
+                self.toast("Opened the image in your browser. Pictures show in kitty and Ghostty.");
+            }
+            return;
+        }
+        let author = commit.author.map(|a| a.username).unwrap_or_default();
+        self.viewer = Some(Viewer { images, index: 0, author });
+    }
+
+    fn ask_mute_or_block(&mut self, block: bool) {
+        let Screen::Profile(username, _) = self.screen().clone() else {
+            self.toast(if block {
+                "Open a profile to block someone."
+            } else {
+                "Open a profile to mute someone."
+            });
+            return;
+        };
+        if self.needs_sign_in(if block { "block people" } else { "mute people" }) || self.username().as_deref() == Some(username.as_str()) {
+            return;
+        }
+        let profile = self.feed().and_then(|f| f.profile.as_ref());
+        if block {
+            self.confirm = Some(Confirm::Block(username, true));
+        } else {
+            let muting = profile.and_then(|p| p.is_muting).unwrap_or(false);
+            self.confirm = Some(Confirm::Mute(username, !muting));
+        }
+    }
+
+    fn mute(&mut self, username: String, on: bool) {
+        let api = self.api.clone();
+        let tx = self.tx.clone();
+        self.spawn(async move {
+            match api.mute(&username, on).await {
+                Ok(()) => {
+                    let _ = tx.send(Msg::Muted {
+                        username: username.clone(),
+                        on,
+                    });
+                    Msg::Toast(
+                        if on {
+                            format!("Muted @{username}. They won't know.")
+                        } else {
+                            format!("Unmuted @{username}.")
+                        },
+                        false,
+                    )
+                }
+                Err(e) => Msg::Toast(e.to_string(), true),
+            }
+        });
+    }
+
+    fn block(&mut self, username: String, on: bool) {
+        let api = self.api.clone();
+        self.spawn(async move {
+            match api.block(&username, on).await {
+                Ok(()) => Msg::Blocked { username, on },
+                Err(e) => Msg::Toast(e.to_string(), true),
+            }
+        });
+    }
+
+    fn report(&mut self, commit: Commit, reason: &'static str) {
+        let api = self.api.clone();
+        self.spawn(async move {
+            match api.report(&commit.id, reason).await {
+                Ok(()) => Msg::Toast("Reported. Thanks: a moderator will take a look.".into(), false),
+                Err(e) => Msg::Toast(e.to_string(), true),
+            }
         });
     }
 
@@ -811,7 +1099,50 @@ impl App {
             preview: false,
             sending: false,
             error: None,
+            mention_index: 0,
         });
+    }
+
+    /// Developers seen anywhere in the app, for completing @mentions: whoever starts with what's typed first.
+    pub fn mention_candidates(&self, prefix: &str) -> Vec<User> {
+        let mut seen: HashMap<String, User> = HashMap::new();
+        let mut add = |u: &User| {
+            if !u.username.is_empty() {
+                seen.entry(u.username.to_lowercase()).or_insert_with(|| u.clone());
+            }
+        };
+        for feed in self.feeds.values() {
+            for item in &feed.items {
+                match item {
+                    Item::Commit(c, _) => {
+                        c.author.iter().for_each(&mut add);
+                        c.quoted_commit.iter().filter_map(|q| q.author.as_ref()).for_each(&mut add);
+                        c.reply_preview
+                            .iter()
+                            .flat_map(|p| &p.data)
+                            .filter_map(|r| r.author.as_ref())
+                            .for_each(&mut add);
+                    }
+                    Item::Notification(n) => n.actor.iter().for_each(&mut add),
+                    Item::User(u) => add(u),
+                }
+            }
+            if let Some(p) = &feed.profile {
+                add(&p.data);
+            }
+        }
+        let me = self.username().unwrap_or_default().to_lowercase();
+        let prefix = prefix.to_lowercase();
+        let mut matches: Vec<User> = seen
+            .into_values()
+            .filter(|u| u.username.to_lowercase() != me)
+            .filter(|u| {
+                prefix.is_empty() || u.username.to_lowercase().starts_with(&prefix) || u.display_name().to_lowercase().contains(&prefix)
+            })
+            .collect();
+        matches.sort_by_key(|u| (!u.username.to_lowercase().starts_with(&prefix), u.username.to_lowercase()));
+        matches.truncate(5);
+        matches
     }
 
     fn submit(&mut self) {
@@ -876,6 +1207,7 @@ impl App {
                 let mode = self.composer.as_ref().map(|c| c.mode.clone());
                 self.composer = None;
                 self.draft = None;
+                config::save_draft(None);
                 self.draft_images.clear();
                 let short = message.lines().next().unwrap_or("Committed.").to_string();
                 self.toast(short);
@@ -884,7 +1216,7 @@ impl App {
                 }
                 // The new commit shows up in the user's own commits, once it's approved.
                 if let Some(username) = self.username() {
-                    self.feeds.remove(&Screen::Profile(username, false));
+                    self.feeds.remove(&Screen::Profile(username, Tab::Commits));
                 }
             }
             Err(e) => {
@@ -1079,14 +1411,41 @@ impl App {
             return self.on_composer_key(key);
         }
         if let Some(confirm) = self.confirm.take() {
+            if let Confirm::Report(commit) = confirm {
+                if let KeyCode::Char(n @ '1'..='4') = key.code {
+                    self.report(commit, REPORT_REASONS[(n as u8 - b'1') as usize].0);
+                }
+                return;
+            }
             if matches!(key.code, KeyCode::Char('y') | KeyCode::Enter) {
                 match confirm {
+                    Confirm::Report(_) => {}
+                    Confirm::Mute(username, on) => self.mute(username, on),
+                    Confirm::Block(username, on) => self.block(username, on),
                     Confirm::Delete(commit) => self.delete(commit),
                     Confirm::SignOut => {
                         self.sign_out_locally();
                         self.toast("Signed out. Revoke the device under Settings → Devices on the web, too.");
                     }
                 }
+            }
+            return;
+        }
+        if self.achievements {
+            self.achievements = false;
+            return;
+        }
+        if let Some(viewer) = self.viewer.as_mut() {
+            let n = viewer.images.len();
+            match key.code {
+                KeyCode::Right | KeyCode::Char('l' | 'j' | ' ') => viewer.index = (viewer.index + 1) % n,
+                KeyCode::Left | KeyCode::Char('h' | 'k') => viewer.index = (viewer.index + n - 1) % n,
+                KeyCode::Char('w') => {
+                    if let Some(url) = viewer.images[viewer.index].url.clone() {
+                        system::open(&url);
+                    }
+                }
+                _ => self.viewer = None,
             }
             return;
         }
@@ -1110,14 +1469,14 @@ impl App {
                 KeyCode::Char('e') => self.navigate(Screen::Log(Log::Trending)),
                 KeyCode::Char('f') => self.navigate(Screen::Log(Log::Following)),
                 KeyCode::Char('p') => match username {
-                    Some(u) => self.navigate(Screen::Profile(u, false)),
+                    Some(u) => self.navigate(Screen::Profile(u, Tab::Commits)),
                     None => {
                         self.navigate(Screen::Settings);
                         self.toast("Set your username first.");
                     }
                 },
                 KeyCode::Char('s') => self.navigate(Screen::Settings),
-                KeyCode::Char('n') => self.navigate(Screen::Notifications),
+                KeyCode::Char('n') => self.navigate(Screen::Notifications(Filter::All)),
                 KeyCode::Char('b') => self.navigate(Screen::Saved),
                 KeyCode::Char('g') => {
                     if let Some(feed) = self.feed_mut() {
@@ -1176,6 +1535,32 @@ impl App {
             KeyCode::Char('b') => self.save(),
             KeyCode::Char('p') => self.pastel(),
             KeyCode::Char('f') => self.follow(),
+            KeyCode::Char('m') => self.ask_mute_or_block(false),
+            KeyCode::Char('v') => self.view_images(),
+            KeyCode::Char('A') => {
+                if self
+                    .feed()
+                    .and_then(|f| f.profile.as_ref())
+                    .is_some_and(|p| p.achievements.is_some())
+                {
+                    self.achievements = true;
+                } else if matches!(self.screen(), Screen::Profile(..)) {
+                    self.toast("Achievements show up when you're signed in.");
+                }
+            }
+            KeyCode::Char('B') => self.ask_mute_or_block(true),
+            KeyCode::Char('!') => {
+                if self.needs_sign_in("report commits") {
+                    return;
+                }
+                if let Some(commit) = self.selected_commit() {
+                    if commit.author.as_ref().map(|a| a.username.clone()) == self.username() {
+                        self.error("That's your own commit. D deletes it.");
+                    } else {
+                        self.confirm = Some(Confirm::Report(commit));
+                    }
+                }
+            }
             KeyCode::Char('R') => self.refresh(),
             KeyCode::Char('D') => {
                 if let Some(commit) = self.selected_commit() {
@@ -1206,9 +1591,15 @@ impl App {
                 let next = Log::ALL[(index + delta).rem_euclid(3) as usize];
                 self.navigate(Screen::Log(next));
             }
-            Screen::Profile(username, replies) => {
+            Screen::Notifications(filter) => {
+                let index = Filter::ALL.iter().position(|f| *f == filter).unwrap_or(0) as isize;
                 self.stack.pop();
-                self.navigate(Screen::Profile(username, !replies));
+                self.navigate(Screen::Notifications(Filter::ALL[(index + delta).rem_euclid(7) as usize]));
+            }
+            Screen::Profile(username, tab) => {
+                let index = Tab::ALL.iter().position(|t| *t == tab).unwrap_or(0) as isize;
+                self.stack.pop();
+                self.navigate(Screen::Profile(username, Tab::ALL[(index + delta).rem_euclid(4) as usize]));
             }
             _ => {}
         }
@@ -1227,6 +1618,51 @@ impl App {
             }
             KeyCode::Char('u') if !self.signed() => self.open_input(InputKind::Username),
             KeyCode::Char('L') if self.signed() => self.confirm = Some(Confirm::SignOut),
+            KeyCode::Left | KeyCode::Right | KeyCode::Char('h' | 'l') if self.signed() && self.me.is_some() => {
+                let current = self.lane_pick.unwrap_or_else(|| self.current_lane_index());
+                let delta: isize = if matches!(key.code, KeyCode::Left | KeyCode::Char('h')) {
+                    -1
+                } else {
+                    1
+                };
+                self.lane_pick = Some((current as isize + delta).rem_euclid(7) as usize);
+            }
+            KeyCode::Enter if self.signed() && self.lane_pick.is_some() => {
+                let pick = self.lane_pick.unwrap_or(6);
+                let lane = (pick < 6).then_some(pick as u8);
+                self.busy = Some("Saving your color…".into());
+                let api = self.api.clone();
+                self.spawn(async move {
+                    Msg::MeUpdated(
+                        api.set_lane(lane, None).await.map_err(|e| e.to_string()),
+                        "Your color is saved.".into(),
+                    )
+                });
+            }
+            KeyCode::Char('#') if self.signed() => self.open_input(InputKind::LaneColor),
+            KeyCode::Char('P') if self.signed() => {
+                let on = !self.me.as_ref().is_some_and(|m| m.pasteis_mode);
+                let api = self.api.clone();
+                self.spawn(async move {
+                    let done = if on {
+                        "Pastéis mode is on: p gives a commit a pastel de nata."
+                    } else {
+                        "Pastéis mode is off."
+                    };
+                    Msg::MeUpdated(api.set_pasteis_mode(on).await.map_err(|e| e.to_string()), done.into())
+                });
+            }
+            KeyCode::Char('G') if self.signed() => {
+                self.busy = Some("Syncing from GitHub…".into());
+                let api = self.api.clone();
+                self.spawn(async move {
+                    Msg::MeUpdated(
+                        api.sync_github().await.map_err(|e| e.to_string()),
+                        "Synced your profile from GitHub.".into(),
+                    )
+                });
+            }
+            KeyCode::Esc if self.lane_pick.is_some() => self.lane_pick = None,
             KeyCode::Enter if !self.signed() && self.config.username.is_some() => self.navigate(Screen::Log(Log::Following)),
             KeyCode::Char('y') | KeyCode::Char('w') => return false,
             KeyCode::Char('j' | 'k') | KeyCode::Down | KeyCode::Up | KeyCode::Enter => {}
@@ -1235,9 +1671,57 @@ impl App {
         true
     }
 
+    /// Where the signed-in user's lane sits in the picker: 0 to 5, or 6 for Automatic and custom colors.
+    pub fn current_lane_index(&self) -> usize {
+        match self.me.as_ref().and_then(|m| m.preferred_lane.clone()) {
+            Some(serde_json::Value::Number(n)) => n.as_u64().unwrap_or(6).min(6) as usize,
+            _ => 6,
+        }
+    }
+
+    /// The user's own commits take their new color, wherever they're shown.
+    fn recolor(&mut self, me: &User) {
+        let lane = me.lane.clone();
+        let fix = |user: &mut User| {
+            if user.username == me.username {
+                user.lane = lane.clone();
+            }
+        };
+        let fix_commit = |c: &mut Commit| {
+            if let Some(author) = c.author.as_mut() {
+                fix(author);
+            }
+            if let Some(q) = c.quoted_commit.as_mut()
+                && let Some(author) = q.author.as_mut()
+            {
+                fix(author);
+            }
+        };
+        for feed in self.feeds.values_mut() {
+            for item in feed.items.iter_mut() {
+                match item {
+                    Item::Commit(c, _) => fix_commit(c),
+                    Item::Notification(n) => {
+                        if let Some(c) = n.commit.as_mut() {
+                            fix_commit(c)
+                        }
+                    }
+                    Item::User(u) => fix(u),
+                }
+            }
+            if let Some(profile) = feed.profile.as_mut() {
+                fix(&mut profile.data);
+            }
+        }
+    }
+
     fn open_input(&mut self, kind: InputKind) {
         let text: Vec<char> = match kind {
             InputKind::Username => self.config.username.clone().unwrap_or_default().chars().collect(),
+            InputKind::LaneColor => match self.me.as_ref().and_then(|m| m.preferred_lane.clone()) {
+                Some(serde_json::Value::String(color)) => color.chars().collect(),
+                _ => Vec::new(),
+            },
             _ => Vec::new(),
         };
         let cursor = text.len();
@@ -1277,6 +1761,20 @@ impl App {
                         self.feeds.remove(&Screen::Log(Log::Following));
                         self.toast(format!("Hi @{username}. Your Following log is built from who you follow."));
                         self.navigate(Screen::Log(Log::Following));
+                    }
+                    InputKind::LaneColor => {
+                        let color = text.trim_start_matches('#').to_lowercase();
+                        if color.len() != 6 || !color.chars().all(|c| c.is_ascii_hexdigit()) {
+                            input.error = Some("A color is six hex digits, like #3bc9db.".into());
+                            return;
+                        }
+                        self.input = None;
+                        self.busy = Some("Saving your color…".into());
+                        let api = self.api.clone();
+                        self.spawn(async move {
+                            let result = api.set_lane(None, Some(&format!("#{color}"))).await.map_err(|e| e.to_string());
+                            Msg::MeUpdated(result, format!("Your color is #{color} now."))
+                        });
                     }
                     InputKind::SignInCode => {
                         if self.sign_in.as_ref().is_some_and(|s| !s.redeeming) {
@@ -1340,7 +1838,7 @@ impl App {
         }
         let username = parts.first().map(|p| p.trim_start_matches('@')).unwrap_or("");
         if !username.is_empty() && username.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-            return self.navigate(Screen::Profile(username.to_string(), false));
+            return self.navigate(Screen::Profile(username.to_string(), Tab::Commits));
         }
         self.error("Try @username, a profile link, or a commit link.");
     }
@@ -1350,6 +1848,7 @@ impl App {
             && matches!(composer.mode, ComposeMode::New)
             && (!composer.body().is_empty() || !composer.images.is_empty())
         {
+            config::save_draft(Some(&composer.text.iter().collect::<String>()));
             self.draft = Some(composer.text);
             self.draft_images = composer.images;
             self.toast("Draft kept. c brings it back.");
@@ -1388,11 +1887,46 @@ impl App {
             _ => {}
         }
 
+        // Completing an @mention: Tab takes the picked one, the arrows pick.
+        if let Some((at, prefix)) = self
+            .composer
+            .as_ref()
+            .filter(|c| !c.sending && !c.preview)
+            .and_then(|c| c.mention())
+        {
+            let candidates = self.mention_candidates(&prefix);
+            if !candidates.is_empty() {
+                let c = self.composer.as_mut().expect("composer");
+                match key.code {
+                    KeyCode::Tab => {
+                        let pick = &candidates[c.mention_index.min(candidates.len() - 1)];
+                        let completion: Vec<char> = format!("{} ", pick.username).chars().collect();
+                        c.text.splice(at + 1..c.cursor, completion.iter().copied());
+                        c.cursor = at + 1 + completion.len();
+                        c.mention_index = 0;
+                        return;
+                    }
+                    KeyCode::Down => {
+                        c.mention_index = (c.mention_index + 1) % candidates.len();
+                        return;
+                    }
+                    KeyCode::Up => {
+                        c.mention_index = (c.mention_index + candidates.len() - 1) % candidates.len();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let Some(c) = self.composer.as_mut() else { return };
         if c.sending || c.preview {
             return;
         }
         c.error = None;
+        if matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete) {
+            c.mention_index = 0;
+        }
         match key.code {
             KeyCode::Enter => {
                 c.text.insert(c.cursor, '\n');
@@ -1535,14 +2069,17 @@ fn apply(feed: &mut Feed, loaded: Loaded, more: bool) {
             feed.notice = Some(notice);
             return;
         }
-        Loaded::Profile(profile, commits, cursor) => {
+        Loaded::Profile(profile, items, cursor) => {
             feed.profile = Some(profile);
-            let items = commits.into_iter().map(|c| Item::Commit(Box::new(c), Role::Normal));
             if more {
                 feed.items.extend(items);
             } else {
-                feed.items = items.collect();
+                feed.items = items;
             }
+            feed.cursor = cursor;
+        }
+        Loaded::People(users, cursor) => {
+            feed.items.extend(users.into_iter().map(|u| Item::User(Box::new(u))));
             feed.cursor = cursor;
         }
     }
@@ -1568,7 +2105,7 @@ async fn fetch(api: Api, screen: Screen, cursor: Option<String>, signed: bool, g
             };
             guest_following(&api, &username).await.map_err(err)
         }
-        Screen::Log(_) | Screen::Notifications | Screen::Saved if !signed => Ok(Loaded::Notice(format!(
+        Screen::Log(_) | Screen::Notifications(_) | Screen::Saved if !signed => Ok(Loaded::Notice(format!(
             "{} needs you to sign in: g s. Until then, Following (1) is built from public commits.",
             screen.title()
         ))),
@@ -1580,15 +2117,33 @@ async fn fetch(api: Api, screen: Screen, cursor: Option<String>, signed: bool, g
             }
             Ok(Loaded::Commits(commits, page.meta.next_cursor))
         }
-        Screen::Notifications => {
-            let page = api.notifications(cursor).await.map_err(err)?;
+        Screen::Notifications(filter) => {
+            let page = api.notifications(filter.query(), cursor).await.map_err(err)?;
             Ok(Loaded::Notifications(page.data, page.meta.next_cursor))
         }
         Screen::Saved => {
             let page = api.saved(cursor).await.map_err(err)?;
             Ok(Loaded::Commits(page.data, page.meta.next_cursor))
         }
-        Screen::Profile(username, replies) => {
+        Screen::Profile(username, tab) if tab.is_people() => {
+            let people = async {
+                if tab == Tab::Followers {
+                    api.followers(&username, cursor).await
+                } else {
+                    api.following(&username, cursor).await
+                }
+            };
+            if cursor.is_some() {
+                let page = people.await.map_err(err)?;
+                return Ok(Loaded::People(page.data, page.meta.next_cursor));
+            }
+            let (profile, page) = tokio::join!(api.user(&username), people);
+            let (profile, page) = (profile.map_err(err)?, page.map_err(err)?);
+            let items = page.data.into_iter().map(|u| Item::User(Box::new(u))).collect();
+            Ok(Loaded::Profile(profile, items, page.meta.next_cursor))
+        }
+        Screen::Profile(username, tab) => {
+            let replies = tab == Tab::Replies;
             let commits = api.user_commits(&username, replies, cursor);
             if cursor.is_some() {
                 let page = commits.await.map_err(err)?;
@@ -1602,6 +2157,7 @@ async fn fetch(api: Api, screen: Screen, cursor: Option<String>, signed: bool, g
                 items.retain(|c| c.id != pinned.id);
                 items.insert(0, pinned);
             }
+            let items = items.into_iter().map(|c| Item::Commit(Box::new(c), Role::Normal)).collect();
             Ok(Loaded::Profile(profile, items, page.meta.next_cursor))
         }
         Screen::Thread(id) => {
@@ -1654,7 +2210,7 @@ async fn fetch(api: Api, screen: Screen, cursor: Option<String>, signed: bool, g
 /// Without signing in there is no log, so Following is put together from the public commits of the people the user
 /// follows, newest first.
 async fn guest_following(api: &Api, username: &str) -> anyhow::Result<Loaded> {
-    let following = api.following(username).await?;
+    let following = api.following(username, None).await?;
     let mut names: Vec<String> = following.data.into_iter().map(|u| u.username).collect();
     names.push(username.to_string());
 

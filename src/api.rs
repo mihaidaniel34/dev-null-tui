@@ -182,8 +182,36 @@ impl Api {
         self.get(&Self::cursor(path, cursor)).await
     }
 
-    pub async fn following(&self, username: &str) -> Result<Page<User>> {
-        self.get(&format!("/api/v1/users/{}/following", encode(username))).await
+    pub async fn following(&self, username: &str, cursor: Option<&str>) -> Result<Page<User>> {
+        self.get(&Self::cursor(format!("/api/v1/users/{}/following", encode(username)), cursor))
+            .await
+    }
+
+    pub async fn followers(&self, username: &str, cursor: Option<&str>) -> Result<Page<User>> {
+        self.get(&Self::cursor(format!("/api/v1/users/{}/followers", encode(username)), cursor))
+            .await
+    }
+
+    pub async fn mute(&self, username: &str, on: bool) -> Result<()> {
+        let method = if on { Method::POST } else { Method::DELETE };
+        self.send(method, &format!("/api/v1/users/{}/mute", encode(username)), None, None)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn block(&self, username: &str, on: bool) -> Result<()> {
+        let method = if on { Method::POST } else { Method::DELETE };
+        self.send(method, &format!("/api/v1/users/{}/block", encode(username)), None, None)
+            .await
+            .map(|_| ())
+    }
+
+    /// Reports a commit to the moderators, privately. `reason` is spam, harassment, unsafe or other.
+    pub async fn report(&self, id: &str, reason: &str) -> Result<()> {
+        let body = json!({ "reason": reason });
+        self.send(Method::POST, &format!("/api/v1/commits/{}/reports", encode(id)), Some(body), None)
+            .await
+            .map(|_| ())
     }
 
     pub async fn commit(&self, id: &str) -> Result<CommitPage> {
@@ -199,8 +227,10 @@ impl Api {
         self.get(&Self::cursor("/api/v1/saved".into(), cursor)).await
     }
 
-    pub async fn notifications(&self, cursor: Option<&str>) -> Result<Page<Notification>> {
-        self.get(&Self::cursor("/api/v1/notifications".into(), cursor)).await
+    /// Listing notifications marks them all as read, whatever `kind` filters them to.
+    pub async fn notifications(&self, kind: &str, cursor: Option<&str>) -> Result<Page<Notification>> {
+        self.get(&Self::cursor(format!("/api/v1/notifications?type={}", encode(kind)), cursor))
+            .await
     }
 
     pub async fn create_commit(&self, body: &str, parent_id: Option<&str>, quoted_commit_id: Option<&str>) -> Result<Commit> {
@@ -248,6 +278,31 @@ impl Api {
         let method = if on { Method::POST } else { Method::DELETE };
         self.write_empty(method, &format!("/api/v1/users/{}/follow", encode(username)))
             .await
+    }
+
+    /// A lane from 0 to 5, a custom `#rrggbb` color, or neither for Automatic.
+    pub async fn set_lane(&self, lane: Option<u8>, color: Option<&str>) -> Result<CurrentUser> {
+        let body = match color {
+            Some(color) => json!({ "lane": null, "color": color }),
+            None => json!({ "lane": lane }),
+        };
+        Ok(self
+            .write::<Data<CurrentUser>>(Method::PUT, "/api/v1/me/lane", Some(body))
+            .await?
+            .data)
+    }
+
+    pub async fn set_pasteis_mode(&self, enabled: bool) -> Result<CurrentUser> {
+        let body = json!({ "enabled": enabled });
+        Ok(self
+            .write::<Data<CurrentUser>>(Method::PUT, "/api/v1/me/pasteis-mode", Some(body))
+            .await?
+            .data)
+    }
+
+    /// Mirrors the profile from GitHub again, as Sync from GitHub does on the web. Once a minute at most.
+    pub async fn sync_github(&self) -> Result<CurrentUser> {
+        Ok(self.write::<Data<CurrentUser>>(Method::PUT, "/api/v1/me/github", None).await?.data)
     }
 
     /// Redeems the code from the authorize page, signed with the key that isn't approved yet.

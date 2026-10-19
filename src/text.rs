@@ -188,15 +188,123 @@ pub fn wrap_indented(text: &str, max: usize, style: Style, indent: usize) -> Vec
         .collect()
 }
 
+/// The colors the web gives tempest/highlight's classes, from the app's own palette.
+fn token_style(class: &str) -> Option<Style> {
+    use crate::theme::rgb;
+    Some(match class {
+        "hl-keyword" => Style::default().fg(Theme::primary()),
+        "hl-type" | "hl-generic" => Style::default().fg(rgb(0xff6e5a)),
+        "hl-property" => Style::default().fg(Theme::lane(3)),
+        "hl-value" | "hl-addition" => Style::default().fg(Theme::lane(1)),
+        "hl-number" | "hl-literal" => Style::default().fg(Theme::lane(0)),
+        "hl-variable" => Style::default().fg(Theme::lane(4)),
+        "hl-comment" => Style::default().fg(Theme::muted()).add_modifier(Modifier::ITALIC),
+        "hl-attribute" => Style::default().add_modifier(Modifier::ITALIC),
+        "hl-deletion" => Style::default().fg(Theme::destructive()),
+        _ => return None,
+    })
+}
+
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let Some(end) = rest.find(';').filter(|e| *e <= 10) else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let entity = &rest[1..end];
+        let decoded = match entity {
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "amp" => Some('&'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            _ => entity
+                .strip_prefix("#x")
+                .and_then(|h| u32::from_str_radix(h, 16).ok())
+                .or_else(|| entity.strip_prefix('#').and_then(|d| d.parse().ok()))
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A highlighted code block's HTML as lines of styled runs. Nested spans keep the innermost class that has a color.
+pub fn highlighted_lines(html: &str) -> Vec<Vec<(String, Style)>> {
+    let base = Style::default().fg(Theme::ink());
+    let mut lines: Vec<Vec<(String, Style)>> = vec![Vec::new()];
+    let mut stack: Vec<Style> = vec![base];
+    let mut rest = html;
+    while !rest.is_empty() {
+        if rest.starts_with("</span>") {
+            if stack.len() > 1 {
+                stack.pop();
+            }
+            rest = &rest[7..];
+        } else if rest.starts_with("<span") {
+            let end = rest.find('>').map(|e| e + 1).unwrap_or(rest.len());
+            let tag = &rest[..end];
+            let current = *stack.last().unwrap_or(&base);
+            let class = tag.split("class=\"").nth(1).and_then(|c| c.split('"').next()).unwrap_or("");
+            let style = class.split_whitespace().filter_map(token_style).fold(current, |s, t| s.patch(t));
+            stack.push(style);
+            rest = &rest[end..];
+        } else if rest.starts_with('<') {
+            // Any other tag carries no color.
+            let end = rest.find('>').map(|e| e + 1).unwrap_or(rest.len());
+            rest = &rest[end..];
+        } else {
+            let end = rest.find('<').unwrap_or(rest.len());
+            let style = *stack.last().unwrap_or(&base);
+            for (i, part) in unescape(&rest[..end]).split('\n').enumerate() {
+                if i > 0 {
+                    lines.push(Vec::new());
+                }
+                if !part.is_empty() {
+                    lines.last_mut().unwrap().push((part.replace('\t', "    "), style));
+                }
+            }
+            rest = &rest[end..];
+        }
+    }
+    lines
+}
+
 /// A commit body as wrapped lines. Fenced code blocks keep their lines, on a washed background.
 pub fn body_lines(body: &str, max: usize, base: Style) -> Vec<Line<'static>> {
+    body_lines_highlighted(body, max, base, &[])
+}
+
+/// Same, with each code block's highlighting from the server, in order, where there is one.
+pub fn body_lines_highlighted(body: &str, max: usize, base: Style, blocks: &[String]) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut in_code = false;
+    let mut block = 0usize;
+    let mut block_line = 0usize;
+    let mut highlighted: Vec<Vec<(String, Style)>> = Vec::new();
 
     for raw in body.trim_end().split('\n') {
         if raw.trim_start().starts_with("```") {
             in_code = !in_code;
             if in_code {
+                highlighted = blocks.get(block).map(|html| highlighted_lines(html)).unwrap_or_default();
+                block += 1;
+                block_line = 0;
                 let lang = raw.trim().trim_start_matches('`').trim();
                 if !lang.is_empty() {
                     lines.push(Line::from(Span::styled(
@@ -209,14 +317,32 @@ pub fn body_lines(body: &str, max: usize, base: Style) -> Vec<Line<'static>> {
         }
 
         if in_code {
-            let code = raw.replace('\t', "    ");
-            let shown = truncate(&code, max.saturating_sub(2));
-            let pad = max.saturating_sub(2 + width(&shown));
-            lines.push(Line::from(vec![
-                Span::styled("▏ ", Style::default().fg(Theme::rail()).bg(Theme::wash())),
-                Span::styled(shown, Style::default().fg(Theme::ink()).bg(Theme::wash())),
-                Span::styled(" ".repeat(pad), Style::default().bg(Theme::wash())),
-            ]));
+            let room = max.saturating_sub(2);
+            let mut spans = vec![Span::styled("▏ ", Style::default().fg(Theme::rail()).bg(Theme::wash()))];
+            let mut used = 0;
+            match highlighted.get(block_line) {
+                Some(runs) => {
+                    for (text, style) in runs {
+                        if used >= room {
+                            break;
+                        }
+                        let shown = truncate(text, room - used);
+                        used += width(&shown);
+                        spans.push(Span::styled(shown, style.bg(Theme::wash())));
+                    }
+                }
+                None => {
+                    let shown = truncate(&raw.replace('\t', "    "), room);
+                    used = width(&shown);
+                    spans.push(Span::styled(shown, Style::default().fg(Theme::ink()).bg(Theme::wash())));
+                }
+            }
+            spans.push(Span::styled(
+                " ".repeat(room.saturating_sub(used)),
+                Style::default().bg(Theme::wash()),
+            ));
+            lines.push(Line::from(spans));
+            block_line += 1;
             continue;
         }
 
@@ -313,6 +439,25 @@ mod tests {
         let lines = plain(&body_lines("look:\n```bash\nls -la\n```", 20, Style::default()));
         assert_eq!(lines[0], "look:");
         assert!(lines.iter().any(|l| l.contains("ls -la")));
+    }
+
+    #[test]
+    fn it_reads_highlighted_html() {
+        let lines = highlighted_lines(
+            "<span class=\"hl-keyword\">fn</span> main() {\n    <span class=\"hl-comment\">// a &lt;b&gt; &amp; c</span>\n}",
+        );
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0][0].0, "fn");
+        assert_eq!(lines[0][0].1.fg, Some(Theme::primary()));
+        assert_eq!(lines[1].iter().map(|(t, _)| t.as_str()).collect::<String>(), "    // a <b> & c");
+        let body = "look\n```rust\nfn main() {\n}\n```";
+        let rendered = plain(&body_lines_highlighted(
+            body,
+            30,
+            Style::default(),
+            &["<span class=\"hl-keyword\">fn</span> main() {\n}".into()],
+        ));
+        assert!(rendered.iter().any(|l| l.contains("fn main() {")));
     }
 
     #[test]

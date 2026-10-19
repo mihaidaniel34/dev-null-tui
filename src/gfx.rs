@@ -15,12 +15,26 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use tokio::sync::Semaphore;
 
-/// The row and column diacritics, as kitty writes them; images are kept within this many cells a side.
-const DIACRITICS: [char; 40] = [
+/// The row and column diacritics, in kitty's order (taken from what `kitten icat --unicode-placeholder` writes).
+/// Pictures are kept within this many cells a side.
+const DIACRITICS: [char; 180] = [
     '\u{0305}', '\u{030D}', '\u{030E}', '\u{0310}', '\u{0312}', '\u{033D}', '\u{033E}', '\u{033F}', '\u{0346}', '\u{034A}', '\u{034B}',
     '\u{034C}', '\u{0350}', '\u{0351}', '\u{0352}', '\u{0357}', '\u{035B}', '\u{0363}', '\u{0364}', '\u{0365}', '\u{0366}', '\u{0367}',
     '\u{0368}', '\u{0369}', '\u{036A}', '\u{036B}', '\u{036C}', '\u{036D}', '\u{036E}', '\u{036F}', '\u{0483}', '\u{0484}', '\u{0485}',
-    '\u{0486}', '\u{0487}', '\u{0592}', '\u{0593}', '\u{0594}', '\u{0595}', '\u{0597}',
+    '\u{0486}', '\u{0487}', '\u{0592}', '\u{0593}', '\u{0594}', '\u{0595}', '\u{0597}', '\u{0598}', '\u{0599}', '\u{059C}', '\u{059D}',
+    '\u{059E}', '\u{059F}', '\u{05A0}', '\u{05A1}', '\u{05A8}', '\u{05A9}', '\u{05AB}', '\u{05AC}', '\u{05AF}', '\u{05C4}', '\u{0610}',
+    '\u{0611}', '\u{0612}', '\u{0613}', '\u{0614}', '\u{0615}', '\u{0616}', '\u{0617}', '\u{0657}', '\u{0658}', '\u{0659}', '\u{065A}',
+    '\u{065B}', '\u{065D}', '\u{065E}', '\u{06D6}', '\u{06D7}', '\u{06D8}', '\u{06D9}', '\u{06DA}', '\u{06DB}', '\u{06DC}', '\u{06DF}',
+    '\u{06E0}', '\u{06E1}', '\u{06E2}', '\u{06E4}', '\u{06E7}', '\u{06E8}', '\u{06EB}', '\u{06EC}', '\u{0730}', '\u{0732}', '\u{0733}',
+    '\u{0735}', '\u{0736}', '\u{073A}', '\u{073D}', '\u{073F}', '\u{0740}', '\u{0741}', '\u{0743}', '\u{0745}', '\u{0747}', '\u{0749}',
+    '\u{074A}', '\u{07EB}', '\u{07EC}', '\u{07ED}', '\u{07EE}', '\u{07EF}', '\u{07F0}', '\u{07F1}', '\u{07F3}', '\u{0816}', '\u{0817}',
+    '\u{0818}', '\u{0819}', '\u{081B}', '\u{081C}', '\u{081D}', '\u{081E}', '\u{081F}', '\u{0820}', '\u{0821}', '\u{0822}', '\u{0823}',
+    '\u{0825}', '\u{0826}', '\u{0827}', '\u{0829}', '\u{082A}', '\u{082B}', '\u{082C}', '\u{082D}', '\u{0951}', '\u{0953}', '\u{0954}',
+    '\u{0F82}', '\u{0F83}', '\u{0F86}', '\u{0F87}', '\u{135D}', '\u{135E}', '\u{135F}', '\u{17DD}', '\u{193A}', '\u{1A17}', '\u{1A75}',
+    '\u{1A76}', '\u{1A77}', '\u{1A78}', '\u{1A79}', '\u{1A7A}', '\u{1A7B}', '\u{1A7C}', '\u{1B6B}', '\u{1B6D}', '\u{1B6E}', '\u{1B6F}',
+    '\u{1B70}', '\u{1B71}', '\u{1B72}', '\u{1B73}', '\u{1CD0}', '\u{1CD1}', '\u{1CD2}', '\u{1CDA}', '\u{1CDB}', '\u{1CE0}', '\u{1DC0}',
+    '\u{1DC1}', '\u{1DC3}', '\u{1DC4}', '\u{1DC5}', '\u{1DC6}', '\u{1DC7}', '\u{1DC8}', '\u{1DC9}', '\u{1DCB}', '\u{1DCC}', '\u{1DD1}',
+    '\u{1DD2}', '\u{1DD3}', '\u{1DD4}', '\u{1DD5}',
 ];
 pub const MAX_CELLS: u16 = DIACRITICS.len() as u16;
 const PLACEHOLDER: char = '\u{10EEEE}';
@@ -276,7 +290,12 @@ fn avatar(picture: &DynamicImage, ring: u32) -> RgbaImage {
 fn photo(picture: &DynamicImage, key: &Key) -> RgbaImage {
     // About two pixels per point on a retina screen, so it stays sharp.
     let (max_w, max_h) = (key.cols as u32 * 20, key.rows as u32 * 40);
-    let mut img = picture.resize(max_w, max_h, FilterType::Lanczos3).to_rgba8();
+    // Never larger than it is: the terminal scales it up into its cells anyway.
+    let mut img = if picture.width() <= max_w && picture.height() <= max_h {
+        picture.to_rgba8()
+    } else {
+        picture.resize(max_w, max_h, FilterType::Lanczos3).to_rgba8()
+    };
     let (w, h) = img.dimensions();
     let radius = (w.min(h) as f32 * 0.06).clamp(4.0, 18.0);
     for y in 0..h {

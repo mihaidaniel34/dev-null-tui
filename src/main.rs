@@ -1,6 +1,7 @@
 // Messages and loaded pages are made once per response, so a large variant costs nothing worth boxing for.
 #![allow(clippy::large_enum_variant)]
 
+mod activity;
 mod api;
 mod app;
 mod attach;

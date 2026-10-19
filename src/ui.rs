@@ -5,6 +5,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
+use crate::activity;
 use crate::api::Log;
 use crate::app::*;
 use crate::config;
@@ -83,6 +84,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.help {
         draw_help(f, app, area);
     }
+    if let Some(viewer) = &app.viewer {
+        draw_viewer(f, viewer, area);
+    }
+    if app.achievements
+        && let Some(profile) = app.feed().and_then(|feed| feed.profile.clone())
+    {
+        draw_achievements(f, &profile, area);
+    }
     if let Some(confirm) = &app.confirm {
         draw_confirm(f, confirm, area);
     }
@@ -113,7 +122,7 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     let screen = app.screen();
     let items: [(&str, &str, bool, &str); 5] = [
         ("◉", "Log", matches!(screen, Screen::Log(_)), "g l"),
-        ("◔", "Notifications", *screen == Screen::Notifications, "g n"),
+        ("◔", "Notifications", matches!(screen, Screen::Notifications(_)), "g n"),
         (
             "◯",
             "Profile",
@@ -249,7 +258,7 @@ fn draw_center(f: &mut Frame, app: &mut App, area: Rect) {
             draw_tabs(
                 f.buffer_mut(),
                 Rect { y, height: 2, ..area },
-                &[("Commits", !replies), ("Replies", *replies)],
+                &Tab::ALL.map(|t| (t.title(), t == *replies)),
             );
             y += 2;
             hairline(f.buffer_mut(), area.x, y, area.width);
@@ -267,6 +276,17 @@ fn draw_center(f: &mut Frame, app: &mut App, area: Rect) {
                 },
             );
             return;
+        }
+        Screen::Notifications(active) => {
+            y = draw_header(f.buffer_mut(), app, Rect { y, height: 1, ..area }, "Notifications");
+            draw_tabs(
+                f.buffer_mut(),
+                Rect { y, height: 2, ..area },
+                &Filter::ALL.map(|filter| (filter.title(), filter == *active)),
+            );
+            y += 2;
+            hairline(f.buffer_mut(), area.x, y, area.width);
+            y += 1;
         }
         other => {
             y = draw_header(f.buffer_mut(), app, Rect { y, height: 1, ..area }, &other.title());
@@ -370,6 +390,9 @@ fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile)
         Span::styled(user.display_name().to_string(), Theme::bold()),
         Span::styled(format!("  @{}", user.username), Theme::dim()),
     ];
+    if profile.is_muting == Some(true) {
+        name.push(Span::styled("  muted", Style::default().fg(Theme::lane(5)).bg(Theme::wash())));
+    }
     if profile.follows_you == Some(true) {
         name.push(Span::styled("  follows you", Style::default().fg(Theme::muted()).bg(Theme::wash())));
     }
@@ -414,6 +437,26 @@ fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile)
     }
     lines.push(Line::from(counts));
 
+    // Activity, streaks and standing, when there's room for them above the commits.
+    if area.height >= 30 {
+        let lane = Theme::user_lane_hex(user);
+        let room = inner.saturating_sub(if gfx::enabled() { 5 } else { 0 });
+        let mut extra = Vec::new();
+        if let Some(activity) = &profile.activity {
+            extra.extend(activity::graph(activity, lane, room));
+        }
+        if let Some(line) = activity::standing(profile.streaks.as_ref(), profile.achievements.as_ref(), lane) {
+            extra.push(line);
+        }
+        if let Some(line) = profile.achievements.as_ref().and_then(|a| activity::badges(a, room)) {
+            extra.push(line);
+        }
+        if !extra.is_empty() {
+            lines.push(Line::default());
+            lines.extend(extra);
+        }
+    }
+
     if let (Some(top), Some(bottom)) = (avatar_row(user, 4, 2, 0), avatar_row(user, 4, 2, 1))
         && lines.len() >= 2
     {
@@ -454,6 +497,7 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
     let spinner = SPINNER[app.tick % SPINNER.len()];
     let screen = app.screen().clone();
     let pasteis = app.me.as_ref().is_some_and(|m| m.pasteis_mode);
+    let app_username = app.username();
     let Some(feed) = app.feeds.get(&screen) else { return };
 
     if feed.items.is_empty() {
@@ -485,7 +529,7 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
 
     let chronological = matches!(
         screen,
-        Screen::Log(Log::Latest) | Screen::Log(Log::Following) | Screen::Profile(_, _)
+        Screen::Log(Log::Latest) | Screen::Log(Log::Following) | Screen::Profile(_, Tab::Commits | Tab::Replies)
     );
     let mut all: Vec<Line<'static>> = Vec::new();
     let mut offsets = Vec::with_capacity(feed.items.len());
@@ -507,6 +551,7 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
                 )
             }
             Item::Notification(n) => render_notification(n, area.width as usize, selected),
+            Item::User(user) => render_person(user, area.width as usize, selected, app_username.as_deref()),
         };
 
         if chronological {
@@ -601,10 +646,13 @@ fn empty_message(screen: &Screen) -> &'static str {
     match screen {
         Screen::Log(Log::Following) => "Nothing here yet. Follow a few developers and their commits show up here.",
         Screen::Log(_) => "Nothing committed yet. Be the first: c",
-        Screen::Notifications => "No notifications. It's quiet in here.",
+        Screen::Notifications(Filter::All) => "No notifications. It's quiet in here.",
+        Screen::Notifications(_) => "Nothing of that kind. ⇥ for the next filter.",
         Screen::Saved => "Nothing saved yet. Press b on a commit to keep it here.",
-        Screen::Profile(_, true) => "No replies yet.",
-        Screen::Profile(_, false) => "No commits yet. Everything else went to /dev/null.",
+        Screen::Profile(_, Tab::Replies) => "No replies yet.",
+        Screen::Profile(_, Tab::Commits) => "No commits yet. Everything else went to /dev/null.",
+        Screen::Profile(_, Tab::Followers) => "No followers yet.",
+        Screen::Profile(_, Tab::Following) => "Not following anyone yet.",
         _ => "",
     }
 }
@@ -668,7 +716,7 @@ fn picture_lines(images: &[Image], content: usize, max_rows: u16) -> Option<Vec<
     }
     let shown: Vec<&Image> = images.iter().filter(|i| i.url.is_some()).take(3).collect();
     let n = shown.len();
-    let each = (content.saturating_sub(n - 1) / n).min(gfx::MAX_CELLS as usize) as u16;
+    let each = (content.saturating_sub(n - 1) / n).min(48) as u16;
     let keys: Vec<gfx::Key> = shown
         .iter()
         .map(|image| {
@@ -801,7 +849,7 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
     // Body, cut short in lists as the web's preview does.
     let body = commit.body.clone().unwrap_or_default();
     if !body.trim().is_empty() {
-        let mut text = body_lines(&body, content, Theme::text());
+        let mut text = text::body_lines_highlighted(&body, content, Theme::text(), &commit.highlighted_blocks());
         if role != Role::Focus && text.len() > LIST_BODY_LINES {
             text.truncate(LIST_BODY_LINES - 2);
             while text.last().is_some_and(|l| l.width() == 0) {
@@ -1011,7 +1059,7 @@ fn quote_lines(commit: &Commit, w: usize) -> Vec<Line<'static>> {
             Theme::dim(),
         ),
     ])];
-    let mut body = body_lines(commit.body.as_deref().unwrap_or(""), w, Theme::text());
+    let mut body = text::body_lines_highlighted(commit.body.as_deref().unwrap_or(""), w, Theme::text(), &commit.highlighted_blocks());
     if body.len() > 4 {
         body.truncate(4);
         while body.last().is_some_and(|l| l.width() == 0) {
@@ -1092,6 +1140,57 @@ fn boxed(inner: Vec<Line<'static>>, w: usize) -> Vec<Line<'static>> {
     }
     out.push(Line::from(Span::styled(format!("╰{}╯", "─".repeat(w.saturating_sub(2))), border)));
     out
+}
+
+/// Someone in a list of followers or following: who they are, and how they and the user are connected.
+fn render_person(user: &User, w: usize, selected: bool, me: Option<&str>) -> Rendered {
+    let content = w.saturating_sub(gutter_width() + 2);
+    let mut chips: Vec<Span<'static>> = Vec::new();
+    if user.follows_you == Some(true) && me != Some(user.username.as_str()) {
+        chips.push(Span::styled(" follows you ", Style::default().fg(Theme::muted()).bg(Theme::wash())));
+        chips.push(Span::raw(" "));
+    }
+    if me != Some(user.username.as_str()) {
+        match user.is_followed {
+            Some(true) => chips.push(Span::styled(" Following ", Style::default().fg(Theme::ink()).bg(Theme::wash()))),
+            Some(false) => chips.push(Span::styled(
+                " Follow · f ",
+                Style::default().fg(Theme::shell()).bg(Theme::primary()),
+            )),
+            None => {}
+        }
+    }
+    let chips_w: usize = chips.iter().map(|s| s.width()).sum();
+    let mut head = vec![
+        small_avatar(user),
+        Span::styled(
+            truncate(user.display_name(), content.saturating_sub(chips_w + user.username.len() + 6)),
+            Theme::bold(),
+        ),
+        Span::styled(format!(" @{}", user.username), Theme::dim()),
+    ];
+    let used: usize = head.iter().map(|s| s.width()).sum();
+    head.push(Span::raw(" ".repeat(content.saturating_sub(used + chips_w))));
+    head.extend(chips);
+
+    let mut lines = vec![Line::from([gutter(selected, Span::raw(" ")), head].concat())];
+    if let Some(bio) = user.bio.as_deref().filter(|b| !b.trim().is_empty()) {
+        let bio = truncate(bio.lines().next().unwrap_or("").trim(), content.saturating_sub(3));
+        lines.push(Line::from(
+            [
+                gutter(selected, Span::raw(" ")),
+                vec![Span::raw("   "), Span::styled(bio, Theme::dim())],
+            ]
+            .concat(),
+        ));
+    }
+    lines.push(Line::default());
+    lines.push(hairline_line(w as u16));
+    Rendered {
+        lines,
+        highlight_from: 0,
+        trailer: 1,
+    }
 }
 
 fn render_notification(n: &Notification, w: usize, selected: bool) -> Rendered {
@@ -1199,6 +1298,76 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
             key_chip("L"),
             Span::styled("  Sign out of this terminal", Theme::text()),
         ]));
+
+        if let Some(me) = &app.me {
+            // Your color, as the web's picker offers it: six lanes, Automatic, or any hex color.
+            lines.push(Line::default());
+            lines.push(section("Your color"));
+            lines.push(Line::default());
+            let current = app.current_lane_index();
+            let picked = app.lane_pick.unwrap_or(current);
+            let custom = matches!(&me.preferred_lane, Some(serde_json::Value::String(_)));
+            let mut swatches = Vec::new();
+            for i in 0..7usize {
+                let (color, label) = if i < 6 {
+                    (Theme::lane(i as u8), String::new())
+                } else {
+                    (Theme::lane(me.automatic_lane.unwrap_or(0)), " Automatic".to_string())
+                };
+                let selected = i == picked;
+                let saved = i == current && !custom;
+                let style = if selected {
+                    Style::default().fg(color).bg(Theme::wash()).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(color)
+                };
+                swatches.push(Span::styled(if selected { "[" } else { " " }, Theme::dim()));
+                swatches.push(Span::styled(if saved { "◉" } else { "●" }, style));
+                swatches.push(Span::styled(label, if selected { Theme::bold() } else { Theme::dim() }));
+                swatches.push(Span::styled(if selected { "]" } else { " " }, Theme::dim()));
+            }
+            if custom {
+                swatches.push(Span::styled("  custom ", Theme::dim()));
+                swatches.push(Span::styled("◉", Style::default().fg(Theme::user_lane(&me.user))));
+            }
+            lines.push(Line::from(swatches));
+            let hint = if app.lane_pick.is_some_and(|p| p != current) {
+                "↵ saves it · esc keeps yours"
+            } else {
+                "← → pick a lane · # any hex color"
+            };
+            lines.push(Line::from(Span::styled(hint, Theme::faint_style())));
+
+            lines.push(Line::default());
+            lines.push(Line::from(vec![
+                key_chip("P"),
+                Span::styled("  Pastéis mode  ", Theme::text()),
+                Span::styled(
+                    if me.pasteis_mode { "on" } else { "off" },
+                    if me.pasteis_mode {
+                        Style::default().fg(Theme::lane(5))
+                    } else {
+                        Theme::dim()
+                    },
+                ),
+            ]));
+            lines.extend(text::wrap_indented(
+                "A pastel de nata button on every commit, ten to give a day.",
+                w,
+                Theme::faint_style(),
+                5,
+            ));
+            lines.push(Line::default());
+            let synced = me
+                .github_synced_at
+                .map(|t| format!("  last synced {}", relative_time(Some(t))))
+                .unwrap_or_default();
+            lines.push(Line::from(vec![
+                key_chip("G"),
+                Span::styled("  Sync your profile from GitHub", Theme::text()),
+                Span::styled(synced, Theme::faint_style()),
+            ]));
+        }
     } else {
         lines.extend(wrap_plain("You're reading as a guest. Sign in to get the Following, Latest and Trending logs, notifications, replies, stars, saves and quotes.", w, Theme::dim()));
         lines.push(Line::default());
@@ -1496,7 +1665,8 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
                 ("j/k", "move"),
                 ("⏎", "open"),
                 ("f", "follow"),
-                ("⇥", "commits/replies"),
+                ("m", "mute"),
+                ("⇥", "tabs"),
                 ("esc", "back"),
             ],
             Screen::Thread(_) => &[("j/k", "move"), ("r", "reply"), ("s", "star"), ("a", "author"), ("esc", "back")],
@@ -1629,8 +1799,158 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(lines).scroll((app.help_scroll as u16, 0)), inner);
 }
 
+/// A commit's image, as large as the terminal allows.
+fn draw_viewer(f: &mut Frame, viewer: &Viewer, area: Rect) {
+    f.render_widget(Clear, area);
+    f.buffer_mut().set_style(area, Style::default().bg(Theme::shell()));
+    let image = &viewer.images[viewer.index];
+    let (max_cols, max_rows) = (area.width.saturating_sub(4), area.height.saturating_sub(4));
+    let (cols, rows) = gfx::fit(image.width.unwrap_or(4), image.height.unwrap_or(3), max_cols, max_rows);
+    let key = gfx::Key {
+        url: image.url.clone().unwrap_or_default(),
+        cols,
+        rows,
+        ring: None,
+    };
+    let x = area.x + (area.width - cols) / 2;
+    let y = area.y + 1 + (max_rows - rows) / 2;
+    let buf = f.buffer_mut();
+    for row in 0..rows {
+        match gfx::row(&key, row) {
+            Some(span) => {
+                buf.set_line(x, y + row, &Line::from(span), cols);
+            }
+            None if row == rows / 2 => {
+                let label = "Loading…";
+                buf.set_string(area.x + (area.width - label.len() as u16) / 2, y + row, label, Theme::dim());
+            }
+            None => {}
+        }
+    }
+    let size = match (image.width, image.height) {
+        (Some(w), Some(h)) => format!(" · {w}×{h}"),
+        _ => String::new(),
+    };
+    let caption = Line::from(vec![
+        Span::styled(format!("@{}", viewer.author), Theme::bold()),
+        Span::styled(format!("  {}/{}{size}", viewer.index + 1, viewer.images.len()), Theme::dim()),
+        Span::styled(if viewer.images.len() > 1 { "   ← → next" } else { "" }, Theme::faint_style()),
+        Span::styled("   w browser   esc close", Theme::faint_style()),
+    ]);
+    let cw = caption.width() as u16;
+    buf.set_line(
+        area.x + area.width.saturating_sub(cw) / 2,
+        area.y + area.height - 2,
+        &caption,
+        area.width,
+    );
+}
+
+/// Every badge, with how far along it is, and the XP to the next Unix rank.
+fn draw_achievements(f: &mut Frame, profile: &Profile, area: Rect) {
+    let Some(a) = &profile.achievements else { return };
+    let lane = Theme::user_lane_hex(&profile.data);
+    let rect = centered(area, 70, a.badges.len() as u16 + 9);
+    let inner = modal(f, rect, &format!("@{}'s achievements", profile.data.username));
+    let w = inner.width as usize;
+
+    let mut lines = Vec::new();
+    let next = a
+        .next_level_xp
+        .map(|n| format!(" / {}", count(n.max(0) as u64)))
+        .unwrap_or_default();
+    lines.push(Line::from(vec![
+        Span::styled(
+            a.rank.clone(),
+            Style::default().fg(crate::theme::rgb(lane)).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  level {}  ·  {}{} XP", a.level, count(a.xp.max(0) as u64), next),
+            Theme::dim(),
+        ),
+    ]));
+    let bar_w = w.saturating_sub(2).min(60);
+    let filled = (a.level_progress.min(100) as usize * bar_w) / 100;
+    lines.push(Line::from(vec![
+        Span::styled("━".repeat(filled), Style::default().fg(crate::theme::rgb(lane))),
+        Span::styled("━".repeat(bar_w - filled), Style::default().fg(Theme::hairline())),
+    ]));
+    lines.push(Line::default());
+
+    for badge in &a.badges {
+        let (mark, style) = if badge.unlocked {
+            ("✓", Style::default().fg(crate::theme::rgb(lane)).add_modifier(Modifier::BOLD))
+        } else {
+            ("○", Theme::faint_style())
+        };
+        let progress = if badge.unlocked || badge.target <= 1 {
+            String::new()
+        } else {
+            format!(" {}/{}", badge.progress, badge.target)
+        };
+        let head = format!("{:<16}", badge.name);
+        let desc_w = w.saturating_sub(head.len() + progress.len() + 4);
+        lines.push(Line::from(vec![
+            Span::styled(format!("{mark} "), style),
+            Span::styled(head, if badge.unlocked { Theme::bold() } else { Theme::dim() }),
+            Span::styled(
+                truncate(&badge.description, desc_w),
+                if badge.unlocked { Theme::text() } else { Theme::faint_style() },
+            ),
+            Span::styled(progress, Theme::faint_style()),
+        ]));
+    }
+    lines.push(Line::default());
+    lines.push(Line::from(vec![key_chip("any key"), Span::styled(" close", Theme::dim())]));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 fn draw_confirm(f: &mut Frame, confirm: &Confirm, area: Rect) {
+    if let Confirm::Report(commit) = confirm {
+        let rect = centered(area, 56, 12);
+        let inner = modal(f, rect, "Report commit");
+        let who = commit.author.as_ref().map(|a| format!("@{}", a.username)).unwrap_or_default();
+        let mut lines = wrap_plain(
+            &format!(
+                "Why should moderators look at this commit by {who}? They'll see your report privately, and the commit stays up until they decide."
+            ),
+            inner.width as usize,
+            Theme::text(),
+        );
+        lines.push(Line::default());
+        for (i, (_, label)) in REPORT_REASONS.iter().enumerate() {
+            lines.push(Line::from(vec![
+                key_chip(&(i + 1).to_string()),
+                Span::styled(format!("  {label}"), Theme::text()),
+            ]));
+        }
+        lines.push(Line::default());
+        lines.push(Line::from(vec![key_chip("any other key"), Span::styled(" cancel", Theme::dim())]));
+        f.render_widget(Paragraph::new(lines), inner);
+        return;
+    }
+    let mute_text;
+    let block_text;
     let (title, message) = match confirm {
+        Confirm::Report(_) => unreachable!(),
+        Confirm::Mute(username, true) => {
+            mute_text = format!("Mute @{username}? Their commits leave your logs. They aren't told, and can still see yours.");
+            ("Mute", mute_text.as_str())
+        }
+        Confirm::Mute(username, false) => {
+            mute_text = format!("Unmute @{username}? Their commits come back to your logs.");
+            ("Unmute", mute_text.as_str())
+        }
+        Confirm::Block(username, on) => {
+            block_text = if *on {
+                format!(
+                    "Block @{username}? Neither of you will see the other's commits, and you'll stop following each other. Unblocking doesn't bring the follows back."
+                )
+            } else {
+                format!("Unblock @{username}?")
+            };
+            (if *on { "Block" } else { "Unblock" }, block_text.as_str())
+        }
         Confirm::Delete(_) => ("Delete commit", "Delete this commit? It goes to /dev/null, for real this time."),
         Confirm::SignOut => (
             "Sign out",
@@ -1658,6 +1978,11 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
             "Your GitHub username",
             "Used to build your Following log without signing in.",
             "octocat",
+        ),
+        InputKind::LaneColor => (
+            "Your color",
+            "Any color, as six hex digits. Lanes look best on the dark theme, but it's yours.",
+            "#3bc9db",
         ),
         InputKind::SignInCode if app.sign_in.as_ref().is_some_and(|s| s.handler.is_some()) => (
             "Sign in",
@@ -1917,5 +2242,57 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
 
     if !composer.preview && !composer.sending {
         f.set_cursor_position(cursor_pos);
+
+        // @mention suggestions, under the cursor.
+        if let Some((_, prefix)) = composer.mention() {
+            let candidates = app.mention_candidates(&prefix);
+            if !candidates.is_empty() {
+                let w = 44.min(area.width.saturating_sub(4));
+                let h = candidates.len() as u16 + 2;
+                let x = cursor_pos.0.saturating_sub(prefix.len() as u16 + 1).min(area.x + area.width - w);
+                let y = if cursor_pos.1 + 1 + h <= area.y + area.height {
+                    cursor_pos.1 + 1
+                } else {
+                    cursor_pos.1.saturating_sub(h)
+                };
+                let rect = Rect { x, y, width: w, height: h };
+                f.render_widget(Clear, rect);
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Theme::rail()))
+                    .title(Span::styled(" ⇥ completes ", Theme::faint_style()))
+                    .style(Style::default().bg(Theme::popover()));
+                let inner = block.inner(rect);
+                f.render_widget(block, rect);
+                let buf = f.buffer_mut();
+                for (i, user) in candidates.iter().enumerate() {
+                    let picked = i == composer.mention_index.min(candidates.len() - 1);
+                    let row = Rect {
+                        x: inner.x,
+                        y: inner.y + i as u16,
+                        width: inner.width,
+                        height: 1,
+                    };
+                    if picked {
+                        buf.set_style(row, Style::default().bg(Theme::primary_soft()));
+                    }
+                    let line = Line::from(vec![
+                        Span::raw(" "),
+                        small_avatar(user),
+                        Span::styled(
+                            format!("@{}", user.username),
+                            if picked {
+                                Theme::link().add_modifier(Modifier::BOLD)
+                            } else {
+                                Theme::text()
+                            },
+                        ),
+                        Span::styled(format!("  {}", truncate(user.display_name(), 18)), Theme::dim()),
+                    ]);
+                    buf.set_line(row.x, row.y, &line, row.width);
+                }
+            }
+        }
     }
 }
