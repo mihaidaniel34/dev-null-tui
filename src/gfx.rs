@@ -60,7 +60,7 @@ fn store() -> std::sync::MutexGuard<'static, Store> {
     STORE
         .get_or_init(|| {
             // Ids live in the 24-bit foreground color; a random start keeps them clear of other programs' images.
-            let start = 0x10000 + (rand::random::<u32>() % 0x700000);
+            let start = 0x10000 + (ssh_key::rand_core::RngCore::next_u32(&mut ssh_key::rand_core::OsRng) % 0x700000);
             Mutex::new(Store {
                 states: HashMap::new(),
                 queue: Vec::new(),

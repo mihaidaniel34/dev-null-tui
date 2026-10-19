@@ -7,9 +7,8 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use rand::RngCore;
-use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
+use ssh_key::rand_core::{OsRng, RngCore};
 use ssh_key::{Algorithm, HashAlg, LineEnding, PrivateKey};
 
 pub const API_NAMESPACE: &str = "devnull-api";
