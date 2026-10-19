@@ -202,7 +202,11 @@ mod tests {
         let a = dir.join("shot one.png");
         fs::write(&a, b"x").unwrap();
         // How the terminal types a dropped file: spaces escaped on macOS and Linux, the path quoted on Windows.
-        let escaped = if cfg!(windows) { format!("\"{}\"", a.display()) } else { a.display().to_string().replace(' ', "\\ ") };
+        let escaped = if cfg!(windows) {
+            format!("\"{}\"", a.display())
+        } else {
+            a.display().to_string().replace(' ', "\\ ")
+        };
         assert_eq!(pasted_paths(&escaped), Some(vec![a.clone()]));
         assert_eq!(pasted_paths(&format!("'{}'", a.display())), Some(vec![a.clone()]));
         assert_eq!(pasted_paths(&format!("{} {}", escaped, escaped)).map(|p| p.len()), Some(2));
