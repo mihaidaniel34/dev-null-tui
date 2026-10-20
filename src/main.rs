@@ -94,7 +94,9 @@ async fn run_cli() -> Result<()> {
 
     gfx::init();
     let mut terminal = setup()?;
-    let result = run(&mut terminal, api, config).await;
+    // Asked even when the theme is set, so switching to auto later knows the answer.
+    let detected = theme::detect_light();
+    let result = run(&mut terminal, api, config, detected).await;
     restore(&mut terminal)?;
     result
 }
@@ -193,9 +195,11 @@ fn restore(terminal: &mut Term) -> Result<()> {
     Ok(())
 }
 
-async fn run(terminal: &mut Term, api: Api, config: Config) -> Result<()> {
+async fn run(terminal: &mut Term, api: Api, config: Config, detected: Option<bool>) -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut app = App::new(api, config, tx);
+    app.detected_light = detected;
+    app.apply_theme();
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(120));
 

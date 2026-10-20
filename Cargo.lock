@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "devnull"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -491,6 +491,7 @@ dependencies = [
  "dirs",
  "futures",
  "image",
+ "libc",
  "ratatui",
  "reqwest",
  "serde",

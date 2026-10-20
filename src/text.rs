@@ -190,10 +190,9 @@ pub fn wrap_indented(text: &str, max: usize, style: Style, indent: usize) -> Vec
 
 /// The colors the web gives tempest/highlight's classes, from the app's own palette.
 fn token_style(class: &str) -> Option<Style> {
-    use crate::theme::rgb;
     Some(match class {
         "hl-keyword" => Style::default().fg(Theme::primary()),
-        "hl-type" | "hl-generic" => Style::default().fg(rgb(0xff6e5a)),
+        "hl-type" | "hl-generic" => Style::default().fg(Theme::brand()),
         "hl-property" => Style::default().fg(Theme::lane(3)),
         "hl-value" | "hl-addition" => Style::default().fg(Theme::lane(1)),
         "hl-number" | "hl-literal" => Style::default().fg(Theme::lane(0)),

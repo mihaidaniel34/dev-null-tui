@@ -372,12 +372,8 @@ fn draw_composer_bar(buf: &mut Buffer, app: &App, area: Rect) -> u16 {
 
     let button = " Commit  c ";
     let bx = area.x + area.width - width(button) as u16 - 1;
-    buf.set_string(bx, area.y + 1, button, Style::default().fg(Theme::ink()).bg(rgb_primary_muted()));
+    buf.set_string(bx, area.y + 1, button, Style::default().fg(Theme::ink()).bg(Theme::primary_muted()));
     area.y + 3
-}
-
-fn rgb_primary_muted() -> ratatui::style::Color {
-    crate::theme::rgb(0x3b5590)
 }
 
 fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile) -> u16 {
@@ -1457,6 +1453,27 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
     }
 
     lines.push(Line::default());
+    lines.push(section("Look"));
+    lines.push(Line::default());
+    let theme = app.config.theme();
+    let shown = match (theme.as_str(), app.detected_light) {
+        ("auto", Some(true)) => "auto · light, like your terminal".to_string(),
+        ("auto", Some(false)) => "auto · dark, like your terminal".to_string(),
+        ("auto", None) => "auto · dark (your terminal didn't say)".to_string(),
+        (other, _) => other.to_string(),
+    };
+    lines.push(Line::from(vec![
+        key_chip("t"),
+        Span::styled("  Theme  ", Theme::text()),
+        Span::styled(shown, Theme::link()),
+    ]));
+    lines.extend(text::wrap_indented(
+        "The web's dark and light palettes. Auto follows your terminal's background.",
+        w,
+        Theme::faint_style(),
+        5,
+    ));
+    lines.push(Line::default());
     lines.push(section("Server"));
     lines.push(Line::default());
     lines.push(Line::from(vec![
@@ -2247,7 +2264,7 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
         fy,
         button,
         if empty || over || composer.sending {
-            Style::default().fg(Theme::muted()).bg(rgb_primary_muted())
+            Style::default().fg(Theme::muted()).bg(Theme::primary_muted())
         } else {
             Style::default()
                 .fg(Theme::shell())

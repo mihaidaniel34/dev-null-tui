@@ -8,13 +8,11 @@ use crate::model::{Achievements, Activity, Bucket, Streaks};
 use crate::text::count;
 use crate::theme::{Theme, rgb};
 
-const SHELL: u32 = 0x111112;
-const EMPTY: u32 = 0x232326;
 const BARS: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 
 fn blend(color: u32, t: f32) -> u32 {
     let mix = |shift: u32| {
-        let (c, s) = (((color >> shift) & 0xff) as f32, ((SHELL >> shift) & 0xff) as f32);
+        let (c, s) = (((color >> shift) & 0xff) as f32, ((Theme::shell_hex() >> shift) & 0xff) as f32);
         ((s + (c - s) * t).round() as u32) << shift
     };
     mix(16) | mix(8) | mix(0)
@@ -23,7 +21,7 @@ fn blend(color: u32, t: f32) -> u32 {
 /// Four shades of the lane, from barely there to the full color, like the web's graph.
 fn shade(count: u64, max: u64, lane: u32) -> u32 {
     if count == 0 || max == 0 {
-        return EMPTY;
+        return Theme::wash_hex();
     }
     let level = ((count * 4).div_ceil(max)).clamp(1, 4);
     blend(lane, [0.32, 0.52, 0.76, 1.0][level as usize - 1])
@@ -71,7 +69,9 @@ fn year(days: &[Bucket], lane: u32, width: usize) -> Vec<Line<'static>> {
         for week in first..weeks {
             let top = color(week * 7 + row * 2);
             let bottom = if row < 3 { color(week * 7 + row * 2 + 1) } else { None };
-            let style = Style::default().fg(top.unwrap_or(rgb(SHELL))).bg(bottom.unwrap_or(rgb(SHELL)));
+            let style = Style::default()
+                .fg(top.unwrap_or(rgb(Theme::shell_hex())))
+                .bg(bottom.unwrap_or(rgb(Theme::shell_hex())));
             spans.push(Span::styled("▀", style));
         }
         lines.push(Line::from(spans));
@@ -84,7 +84,7 @@ fn year(days: &[Bucket], lane: u32, width: usize) -> Vec<Line<'static>> {
     )];
     legend.push(Span::styled("less ", Theme::faint_style()));
     for level in 0..5u64 {
-        let c = if level == 0 { EMPTY } else { shade(level, 4, lane) };
+        let c = if level == 0 { Theme::wash_hex() } else { shade(level, 4, lane) };
         legend.push(Span::styled("■", Style::default().fg(rgb(c))));
     }
     legend.push(Span::styled(" more", Theme::faint_style()));
@@ -120,7 +120,7 @@ fn bars(buckets: &[Bucket], lane: u32, width: usize, scale: &str) -> Vec<Line<'s
     for b in buckets {
         // Two lines of bars, for sixteen steps.
         let height = if max == 0 { 0 } else { ((b.count * 16).div_ceil(max)) as usize };
-        let color = rgb(if b.count == 0 { EMPTY } else { lane });
+        let color = rgb(if b.count == 0 { Theme::wash_hex() } else { lane });
         let (upper, lower) = if height > 8 {
             (BARS[height - 9], "█")
         } else {
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn shades_grow_with_the_count() {
-        assert_eq!(shade(0, 10, 0xff0000), EMPTY);
+        assert_eq!(shade(0, 10, 0xff0000), Theme::wash_hex());
         assert_eq!(shade(10, 10, 0xff0000), 0xff0000);
         assert!(shade(1, 10, 0xff0000) >> 16 < shade(9, 10, 0xff0000) >> 16);
     }

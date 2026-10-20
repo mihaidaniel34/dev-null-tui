@@ -330,6 +330,8 @@ pub struct App {
     pub help: bool,
     /// The profile's achievements, opened with A.
     pub achievements: bool,
+    /// Whether the terminal's background is light, when it said.
+    pub detected_light: Option<bool>,
     /// A commit's images, full size, opened with v.
     pub viewer: Option<Viewer>,
     /// The lane being picked in Settings, 0 to 5, or 6 for Automatic, before it's saved.
@@ -365,6 +367,7 @@ impl App {
             achievements: false,
             lane_pick: None,
             viewer: None,
+            detected_light: None,
             help_scroll: 0,
             pending_g: false,
             toast: None,
@@ -1605,8 +1608,29 @@ impl App {
         }
     }
 
+    pub fn apply_theme(&self) {
+        crate::theme::set_light(match self.config.theme().as_str() {
+            "light" => true,
+            "dark" => false,
+            _ => self.detected_light.unwrap_or(false),
+        });
+    }
+
     fn on_settings_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
+            KeyCode::Char('t') => {
+                let next = match self.config.theme().as_str() {
+                    "auto" => "dark",
+                    "dark" => "light",
+                    _ => "auto",
+                };
+                self.config.theme = Some(next.into());
+                let _ = self.config.save();
+                self.apply_theme();
+                if std::env::var("DEVNULL_THEME").is_ok_and(|t| !t.is_empty()) {
+                    self.toast("DEVNULL_THEME is set, so it wins over this setting.");
+                }
+            }
             KeyCode::Char('s') if !self.signed() => self.start_sign_in(),
             KeyCode::Char('v') if self.sign_in.is_some() => {
                 self.input = Some(Input {

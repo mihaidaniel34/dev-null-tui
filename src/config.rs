@@ -14,6 +14,21 @@ pub struct Config {
     /// Whether the device key was approved on the web.
     #[serde(default)]
     pub signed_in: bool,
+    /// "auto" (the default) follows the terminal's background; "dark" or "light" pick one.
+    #[serde(default)]
+    pub theme: Option<String>,
+}
+
+impl Config {
+    /// DEVNULL_THEME wins over the saved setting.
+    pub fn theme(&self) -> String {
+        std::env::var("DEVNULL_THEME")
+            .ok()
+            .filter(|t| !t.is_empty())
+            .or_else(|| self.theme.clone())
+            .unwrap_or_else(|| "auto".into())
+            .to_lowercase()
+    }
 }
 
 pub fn dir() -> PathBuf {

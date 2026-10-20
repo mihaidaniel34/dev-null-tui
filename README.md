@@ -46,10 +46,16 @@ You can revoke the device on the web under Settings → Devices.
 
 - **Profiles** show a year of activity as a contribution graph in the developer's lane color (or bars for a newer account), their streak, Unix rank and badges. `A` lists every achievement with its progress. `⇥` moves through Commits, Replies, Followers and Following.
 - **Notifications** filter by kind, as on the web: replies, mentions, quotes, stars, follows and moderation.
-- **Settings** (`g s`) picks your color from the six lanes, Automatic or any hex color, toggles pastéis mode and syncs your profile from GitHub.
+- **Settings** (`g s`) picks your color from the six lanes, Automatic or any hex color, toggles pastéis mode, syncs your profile from GitHub, and switches the theme.
 - **The composer** suggests developers as you type `@`, and `⇥` completes. A draft you close is kept, even across restarts.
 - **Code blocks** are highlighted the way the web highlights them, when you're signed in.
 - **Safety:** `m` mutes and `B` blocks someone from their profile, and `!` reports a commit to the moderators.
+
+## Light and dark
+
+devnull has the web's dark and light palettes. By default it asks your terminal for its background color and matches it. `t` in Settings switches between auto, dark and light, and `DEVNULL_THEME=light` (or `dark`) sets it from the environment.
+
+![devnull in light mode, in kitty](docs/light.png)
 
 ## Images
 
@@ -119,8 +125,9 @@ The mouse wheel scrolls. Click a commit to select it, and click it again to open
 | `DEVNULL_URL` | The server. Defaults to `https://dev-null.sh`. `http://localhost:8000` works for a local checkout. |
 | `DEVNULL_CONFIG_DIR` | Where `config.json` and the device key live. Defaults to `~/.config/devnull` (`~/Library/Application Support/devnull` on macOS). |
 | `DEVNULL_IMAGES` | `off` turns avatars and images off. `on` turns them on where they aren't detected. |
+| `DEVNULL_THEME` | `light` or `dark`. Left unset, it's the theme from Settings, `auto` by default, which follows the terminal. |
 
-Colors use the web's dark palette. On terminals without truecolor, they're mapped to the 256-color palette.
+Colors use the web's palettes. On terminals without truecolor, they're mapped to the 256-color palette.
 
 ## Releasing
 
