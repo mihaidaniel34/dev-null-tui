@@ -51,7 +51,9 @@ pub fn open(url: &str) -> bool {
     let (program, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
         ("open", vec![url])
     } else if cfg!(windows) {
-        ("cmd", vec!["/C", "start", "", url])
+        // Not `cmd /C start`: cmd reads every & in the URL as the end of a command, which cut the sign-in link
+        // down to its first parameter. rundll32 hands the URL to the default browser untouched.
+        ("rundll32", vec!["url.dll,FileProtocolHandler", url])
     } else {
         ("xdg-open", vec![url])
     };
