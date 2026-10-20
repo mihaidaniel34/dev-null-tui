@@ -16,6 +16,18 @@ use crate::auth::random_hex;
 pub const NAMESPACE: &str = "devnull-commit";
 pub const IMAGES_NAMESPACE: &str = "devnull-commit-images";
 
+/// None of this machine's SSH keys is on the GitHub account of a /dev/null user, so nothing can be signed here.
+#[derive(Debug)]
+pub struct NoGitHubKey(pub String);
+
+impl std::fmt::Display for NoGitHubKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NoGitHubKey {}
+
 pub struct SigningKey {
     /// What to pass to `ssh-keygen -f`: the public key when the agent holds it, otherwise the private key file.
     path: PathBuf,
@@ -92,7 +104,7 @@ pub async fn find_key(api: &Api) -> Result<SigningKey> {
         }
     }
     if candidates.is_empty() {
-        bail!("No Ed25519 or RSA SSH key found in your SSH agent or in ~/.ssh.");
+        return Err(NoGitHubKey("No Ed25519 or RSA SSH key found in your SSH agent or in ~/.ssh.".into()).into());
     }
 
     let response = api
@@ -106,6 +118,9 @@ pub async fn find_key(api: &Api) -> Result<SigningKey> {
         .map_err(|_| anyhow!("Could not reach {}.", api.base))?;
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
+    if status.as_u16() == 404 || status.as_u16() == 403 {
+        return Err(NoGitHubKey(plain_message(&text, status.as_u16())).into());
+    }
     if !status.is_success() {
         bail!("{}", plain_message(&text, status.as_u16()));
     }

@@ -172,6 +172,16 @@ fn setup() -> Result<Term> {
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 
+/// Clears the screen and has the next frame drawn whole. Not `Terminal::clear`, which asks the terminal where its
+/// cursor is, and loses the answer to the event reader, giving up after two seconds. A failure here only costs a
+/// stale frame, so it never ends the app.
+fn redraw_from_scratch(terminal: &mut Term) {
+    let _ = execute!(io::stdout(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
+    if let Ok(fresh) = Terminal::new(CrosstermBackend::new(io::stdout())) {
+        *terminal = fresh;
+    }
+}
+
 fn leave() -> Result<()> {
     let mut stdout = io::stdout();
     if KEYBOARD_ENHANCED.load(Ordering::Relaxed) {
@@ -233,7 +243,7 @@ async fn run(terminal: &mut Term, api: Api, config: Config, detected: Option<boo
             let result = cli_commit(terminal, &app, job).await;
             events = EventStream::new();
             app.on_cli_commit(result);
-            terminal.clear()?;
+            redraw_from_scratch(terminal);
         }
 
         if app.quit {
@@ -264,7 +274,7 @@ async fn cli_commit(terminal: &mut Term, app: &App, job: CliJob) -> Result<Strin
                 PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
             );
         }
-        terminal.clear()?;
+        redraw_from_scratch(terminal);
         signature?
     } else {
         cli_commit::sign(&key, &payload, with_images)?

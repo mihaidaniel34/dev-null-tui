@@ -1224,9 +1224,18 @@ impl App {
                 }
             }
             Err(e) => {
+                // Without a key on GitHub, say why one was needed, and what to do instead.
+                let message = match (e.downcast_ref::<crate::cli_commit::NoGitHubKey>(), self.signed()) {
+                    (Some(_), true) => "Images are signed with the SSH key on your GitHub account, since the app's API can't \
+                        take them yet, and no key on this machine is on it. Add one at github.com/settings/keys, or \
+                        ⌃X the image to commit without it."
+                        .to_string(),
+                    (Some(_), false) => format!("{e} Signing in (g s) lets you commit without a key on GitHub, except for images."),
+                    (None, _) => e.to_string(),
+                };
                 if let Some(composer) = self.composer.as_mut() {
                     composer.sending = false;
-                    composer.error = Some(e.to_string());
+                    composer.error = Some(message);
                 }
             }
         }

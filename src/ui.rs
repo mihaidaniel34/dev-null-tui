@@ -2112,7 +2112,17 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
     } else {
         composer.images.len() as u16 + 1
     };
-    let h = (context_lines.len() as u16 + text_h + image_rows + 7).min(area.height.saturating_sub(2));
+    // An error gets as many lines as it needs, above the footer, rather than being cut short.
+    let error_lines: Vec<Line> = composer
+        .error
+        .as_deref()
+        .map(|e| wrap_plain(e, w.saturating_sub(6) as usize, Style::default().fg(Theme::destructive())))
+        .unwrap_or_default()
+        .into_iter()
+        .take(5)
+        .collect();
+    let error_rows = if error_lines.is_empty() { 0 } else { error_lines.len() as u16 + 1 };
+    let h = (context_lines.len() as u16 + text_h + image_rows + error_rows + 7).min(area.height.saturating_sub(2));
     let rect = centered(area, w, h);
     let inner = modal(f, rect, &title);
     let buf = f.buffer_mut();
@@ -2135,7 +2145,7 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
         x: inner.x + 2,
         y,
         width: inner.width.saturating_sub(2),
-        height: text_h.min(inner.y + inner.height - y - 3),
+        height: text_h.min((inner.y + inner.height).saturating_sub(y + 3 + error_rows)),
     };
     buf.set_string(inner.x, y, "●", Style::default().fg(lane));
 
@@ -2226,15 +2236,13 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
 
     // Footer: the error or what's going on, the count, and the button.
     let fy = inner.y + inner.height - 1;
+    for (i, line) in error_lines.iter().enumerate() {
+        buf.set_line(inner.x, fy - 1 - error_rows + i as u16, line, inner.width);
+    }
     hairline(buf, inner.x, fy - 1, inner.width);
     let n = composer.text.iter().filter(|c| !c.is_whitespace() || **c == ' ').count();
     let over = composer.body().chars().count() > MAX_BODY;
-    let status: Line = if let Some(error) = &composer.error {
-        Line::from(Span::styled(
-            truncate(error, inner.width as usize - 24),
-            Style::default().fg(Theme::destructive()),
-        ))
-    } else if composer.sending {
+    let status: Line = if composer.sending {
         Line::from(Span::styled(
             app.busy.clone().unwrap_or_else(|| "Committing…".into()),
             Theme::link(),
