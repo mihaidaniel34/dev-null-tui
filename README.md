@@ -85,7 +85,7 @@ These match the web app:
 | | |
 |---|---|
 | `j` / `k` | Next / previous commit |
-| `↵` | Open the commit (or the author, on an open commit) |
+| `↵` | Open the commit (on an open commit, reply to it) |
 | `y` | Copy the link |
 | `r` / `q` | Reply / quote |
 | `o` | Show or hide replies |

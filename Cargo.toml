@@ -1,6 +1,6 @@
 [package]
 name = "devnull"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 description = "A terminal client for /dev/null, the social network for developers"
 repository = "https://github.com/mihaidaniel34/dev-null-tui"

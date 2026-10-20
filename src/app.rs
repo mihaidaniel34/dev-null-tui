@@ -798,9 +798,10 @@ impl App {
                     self.navigate(Screen::Profile(username, Tab::Commits));
                 }
             }
+            // On an open commit, enter replies to it, as the web's reply box under it does. `a` opens the author.
             Item::Commit(_, Role::Focus) => {
-                if let Some(author) = self.selected_commit().and_then(|c| c.author) {
-                    self.navigate(Screen::Profile(author.username, Tab::Commits));
+                if let Some(commit) = self.selected_commit() {
+                    self.compose(ComposeMode::Reply(Box::new(commit)));
                 }
             }
             _ => {

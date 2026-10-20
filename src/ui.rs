@@ -1015,6 +1015,18 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
         lines.push(Line::from(gutter(selected, Span::raw(" "))));
         lines.push(hairline_line(w as u16));
         if role == Role::Focus {
+            // The web's reply box under an open commit, as a prompt.
+            let who = author.username.clone();
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled("↩ ", Theme::link()),
+                Span::styled(format!("Reply to @{who}…"), Theme::dim()),
+                Span::raw("   "),
+                key_chip("⏎"),
+                Span::styled(" or ", Theme::faint_style()),
+                key_chip("r"),
+            ]));
+            lines.push(hairline_line(w as u16));
             lines.push(Line::from(Span::styled(
                 format!(
                     "    Replies{}",
@@ -1030,7 +1042,7 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
             return Rendered {
                 lines,
                 highlight_from: 0,
-                trailer: 3,
+                trailer: 5,
             };
         }
     }
@@ -1686,7 +1698,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
                 ("⇥", "tabs"),
                 ("esc", "back"),
             ],
-            Screen::Thread(_) => &[("j/k", "move"), ("r", "reply"), ("s", "star"), ("a", "author"), ("esc", "back")],
+            Screen::Thread(_) => &[("j/k", "move"), ("⏎", "reply"), ("s", "star"), ("a", "author"), ("esc", "back")],
             _ => &[
                 ("j/k", "move"),
                 ("⏎", "open"),
