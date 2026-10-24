@@ -1,0 +1,35 @@
+# Silver windows, navy title bars and white text fields.
+
+name = "Windows 98"
+extends = "light"
+borders = "plain"
+
+# The 16-color palette's darker half, which reads on silver.
+lanes = ["#c04000", "#008000", "#800080", "#008080", "#c00060", "#808000"]
+
+[colors]
+shell = "#c0c0c0"
+popover = "#c0c0c0"
+ink = "#000000"
+muted = "#3c3c3c"
+faint = "#686868"
+hairline = "#808080"
+rail = "#808080"
+wash = "#ffffff"
+highlight = "#dedede"
+primary = "#000080"
+on_primary = "#ffffff"
+primary_soft = "#000080"
+on_primary_soft = "#ffffff"
+primary_muted = "#dfdfdf"
+brand = "#800000"
+destructive = "#c00000"
+star = "#806000"
+code = "#000080"
+
+# Every commit is a window: the selected one has the active title bar, the rest the inactive one.
+[title_bar]
+active = ["#000080", "#1084d0"]
+active_ink = "#ffffff"
+inactive = ["#808080", "#b5b5b5"]
+inactive_ink = "#dcdcdc"

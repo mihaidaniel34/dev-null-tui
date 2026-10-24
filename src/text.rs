@@ -409,6 +409,14 @@ pub fn count(n: u64) -> String {
     }
 }
 
+/// A path with the home directory as ~, the way it's written in a shell.
+pub fn tilde(path: &std::path::Path) -> String {
+    match dirs::home_dir().and_then(|home| path.strip_prefix(home).ok().map(|rest| rest.display().to_string())) {
+        Some(rest) => format!("~/{rest}"),
+        None => path.display().to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

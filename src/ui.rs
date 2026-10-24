@@ -3,7 +3,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::activity;
 use crate::api::Log;
@@ -12,7 +12,7 @@ use crate::config;
 use crate::gfx;
 use crate::model::*;
 use crate::text::{self, body_lines, count, day_label, relative_time, truncate, width, wrap_plain};
-use crate::theme::Theme;
+use crate::theme::{self, Theme, rgb};
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const LIST_BODY_LINES: usize = 10;
@@ -145,7 +145,7 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
             height: 1,
         };
         let style = if active {
-            Style::default().fg(Theme::primary()).bg(Theme::primary_soft())
+            Style::default().fg(Theme::on_primary_soft()).bg(Theme::primary_soft())
         } else {
             Theme::dim()
         };
@@ -180,7 +180,7 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
             height: 1,
         };
         let style = Style::default()
-            .fg(Theme::shell())
+            .fg(Theme::on_primary())
             .bg(Theme::primary())
             .add_modifier(Modifier::BOLD);
         buf.set_style(row, style);
@@ -296,7 +296,7 @@ fn draw_center(f: &mut Frame, app: &mut App, area: Rect) {
     let new_count = app.feed().map(|f| f.new_count).unwrap_or(0);
     if new_count > 0 {
         let row = Rect { y, height: 1, ..area };
-        let style = Style::default().fg(Theme::primary()).bg(Theme::primary_soft());
+        let style = Style::default().fg(Theme::on_primary_soft()).bg(Theme::primary_soft());
         f.buffer_mut().set_style(row, style);
         let label = format!("↑ {} new commit{} · R", new_count, if new_count == 1 { "" } else { "s" });
         let x = area.x + (area.width.saturating_sub(width(&label) as u16)) / 2;
@@ -427,7 +427,7 @@ fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile)
             if following {
                 Style::default().fg(Theme::ink()).bg(Theme::wash())
             } else {
-                Style::default().fg(Theme::shell()).bg(Theme::primary())
+                Style::default().fg(Theme::on_primary()).bg(Theme::primary())
             },
         ));
     }
@@ -487,6 +487,8 @@ struct Rendered {
     highlight_from: usize,
     /// Lines at the end that follow the item rather than belong to it, like the thread's Replies divider.
     trailer: usize,
+    /// The commit's header, which a theme with title bars draws as one.
+    title: Option<usize>,
 }
 
 fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
@@ -530,6 +532,7 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
     let mut all: Vec<Line<'static>> = Vec::new();
     let mut offsets = Vec::with_capacity(feed.items.len());
     let mut last_day: Option<String> = None;
+    let mut titles: Vec<(usize, bool)> = Vec::new();
 
     for (i, item) in feed.items.iter().enumerate() {
         let selected = i == feed.selected;
@@ -561,6 +564,7 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
                         hairline_line(area.width),
                     ];
                     rendered.highlight_from += lines.len();
+                    rendered.title = rendered.title.map(|t| t + lines.len());
                     lines.append(&mut rendered.lines);
                     rendered.lines = lines;
                     last_day = Some(label);
@@ -569,6 +573,9 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
         }
 
         let start = all.len();
+        if let Some(t) = rendered.title.filter(|_| window(selected)) {
+            titles.push((start + t, selected));
+        }
         offsets.push((start + rendered.highlight_from, start + rendered.lines.len() - rendered.trailer));
         all.extend(rendered.lines);
     }
@@ -621,10 +628,13 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
                     width: area.width,
                     height: 1,
                 },
-                Style::default().bg(Theme::wash()),
+                Style::default().bg(Theme::highlight()),
             );
         }
         buf.set_line(area.x, y, line, area.width);
+        if let Some(&(_, active)) = titles.iter().find(|(at, _)| *at == index) {
+            draw_title_bar(buf, area, y, active);
+        }
     }
 
     // A scrollbar, when there's more than a screen.
@@ -634,6 +644,41 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
         for i in 0..thumb {
             let y = area.y + (top + i).min(height - 1) as u16;
             buf[(area.x + area.width - 1, y)].set_symbol("▐").set_fg(Theme::rail());
+        }
+    }
+}
+
+/// What a title bar has on the right, as Windows 98 has them: minimize, maximize and close.
+const BUTTONS: &str = " _□ × ";
+
+/// Whether a commit's header is drawn as a title bar.
+fn window(selected: bool) -> bool {
+    Theme::title_bar().is_some_and(|t| selected || t.inactive.is_some())
+}
+
+/// Repaints a commit's header as a window title bar: the theme's fade behind it, its text in the title bar's ink,
+/// and the buttons on the right. The gutter is left alone, since avatars keep their image id in the colors there.
+fn draw_title_bar(buf: &mut Buffer, area: Rect, y: u16, active: bool) {
+    let Some(bar) = Theme::title_bar() else { return };
+    let ((from, to), ink) = match (active, bar.inactive) {
+        (false, Some(inactive)) => inactive,
+        _ => (bar.active, bar.active_ink),
+    };
+    let start = area.x + gutter_width() as u16;
+    let end = area.x + area.width.saturating_sub(2);
+    let span = end.saturating_sub(start).max(1);
+    for x in start..end {
+        let t = (x - start) as f32 / span as f32;
+        buf[(x, y)].set_bg(rgb(theme::fade(from, to, t))).set_fg(rgb(ink));
+    }
+    let buttons = end.saturating_sub(BUTTONS.len() as u16);
+    for (i, c) in BUTTONS.chars().enumerate() {
+        if c != ' ' && buttons + (i as u16) >= start {
+            buf[(buttons + i as u16, y)]
+                .set_symbol(&c.to_string())
+                .set_fg(Theme::ink())
+                .set_bg(Theme::popover())
+                .modifier = Modifier::BOLD;
         }
     }
 }
@@ -769,6 +814,7 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
             lines,
             highlight_from: 0,
             trailer: usize::from(!rail_after),
+            title: None,
         };
     }
 
@@ -818,6 +864,12 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
         Some("rejected") => status.push(Span::styled(" · rejected", Style::default().fg(Theme::destructive()))),
         _ => {}
     }
+    // A title bar keeps room on the right for its buttons.
+    let content = if window(selected) {
+        content.saturating_sub(BUTTONS.len())
+    } else {
+        content
+    };
     let fixed = width(&author.username) + 2 + 3 + width(&time) + hash.len() + 2 + status.iter().map(|s| s.width()).sum::<usize>();
     let name = truncate(author.display_name(), content.saturating_sub(fixed).max(6));
     let mut header = vec![
@@ -833,6 +885,7 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
     }
     lines.push(Line::from([gutter(selected, node), header].concat()));
     let header_at = lines.len() - 1;
+    let content = w.saturating_sub(gutter_width() + 2).max(10);
 
     let prefix = |lines: &mut Vec<Line<'static>>, body: Vec<Line<'static>>| {
         for line in body {
@@ -1038,6 +1091,7 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
                 lines,
                 highlight_from: 0,
                 trailer: 5,
+                title: Some(header_at),
             };
         }
     }
@@ -1046,6 +1100,7 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
         lines,
         highlight_from: 0,
         trailer: 1,
+        title: Some(header_at),
     }
 }
 
@@ -1158,7 +1213,7 @@ fn render_person(user: &User, w: usize, selected: bool, me: Option<&str>) -> Ren
             Some(true) => chips.push(Span::styled(" Following ", Style::default().fg(Theme::ink()).bg(Theme::wash()))),
             Some(false) => chips.push(Span::styled(
                 " Follow · f ",
-                Style::default().fg(Theme::shell()).bg(Theme::primary()),
+                Style::default().fg(Theme::on_primary()).bg(Theme::primary()),
             )),
             None => {}
         }
@@ -1193,6 +1248,7 @@ fn render_person(user: &User, w: usize, selected: bool, me: Option<&str>) -> Ren
         lines,
         highlight_from: 0,
         trailer: 1,
+        title: None,
     }
 }
 
@@ -1259,6 +1315,7 @@ fn render_notification(n: &Notification, w: usize, selected: bool) -> Rendered {
         lines,
         highlight_from: 0,
         trailer: 1,
+        title: None,
     }
 }
 
@@ -1466,20 +1523,23 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::default());
     lines.push(section("Look"));
     lines.push(Line::default());
-    let theme = app.config.theme();
-    let shown = match (theme.as_str(), app.detected_light) {
+    let shown = match (app.config.theme().as_str(), app.detected_light) {
         ("auto", Some(true)) => "auto · light, like your terminal".to_string(),
         ("auto", Some(false)) => "auto · dark, like your terminal".to_string(),
         ("auto", None) => "auto · dark (your terminal didn't say)".to_string(),
-        (other, _) => other.to_string(),
+        _ => Theme::name(),
     };
     lines.push(Line::from(vec![
         key_chip("t"),
         Span::styled("  Theme  ", Theme::text()),
         Span::styled(shown, Theme::link()),
+        Span::styled("  T goes back", Theme::faint_style()),
     ]));
     lines.extend(text::wrap_indented(
-        "The web's dark and light palettes. Auto follows your terminal's background.",
+        &format!(
+            "Auto follows your terminal's background. Your own themes go in {}, as TOML files like the ones in the repo's themes/ folder.",
+            text::tilde(&crate::theme::custom_dir())
+        ),
         w,
         Theme::faint_style(),
         5,
@@ -1523,7 +1583,7 @@ fn draw_right(f: &mut Frame, app: &App, area: Rect) {
     };
     Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_type(Theme::borders())
         .border_style(Style::default().fg(Theme::hairline()))
         .render_ref(search, buf);
     buf.set_string(x + 2, search.y + 1, "◎  Search", Theme::dim());
@@ -1680,7 +1740,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         ])
     } else if app.pending_g {
         Line::from(vec![
-            Span::styled(" g ", Style::default().fg(Theme::shell()).bg(Theme::primary())),
+            Span::styled(" g ", Style::default().fg(Theme::on_primary()).bg(Theme::primary())),
             Span::styled(
                 "  l log  e trending  f following  n notifications  p profile  b starred  s settings  g top",
                 Theme::dim(),
@@ -1734,12 +1794,28 @@ fn modal(f: &mut Frame, rect: Rect, title: &str) -> Rect {
     f.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_type(Theme::borders())
         .border_style(Style::default().fg(Theme::rail()))
         .title(Span::styled(format!(" {title} "), Theme::bold()))
         .style(Style::default().bg(Theme::popover()));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
+    // With a theme's title bars, the top edge becomes the window's, with its close button.
+    if let Some(bar) = Theme::title_bar().filter(|_| rect.width > 8) {
+        let buf = f.buffer_mut();
+        let (start, end) = (rect.x + 1, rect.x + rect.width - 1);
+        for x in start..end {
+            let t = (x - start) as f32 / (end - start) as f32;
+            buf[(x, rect.y)]
+                .set_symbol(" ")
+                .set_bg(rgb(theme::fade(bar.active.0, bar.active.1, t)));
+        }
+        let ink = Style::default().fg(rgb(bar.active_ink)).add_modifier(Modifier::BOLD);
+        buf.set_stringn(start + 1, rect.y, title, (end - start).saturating_sub(5) as usize, ink);
+        buf[(end - 2, rect.y)]
+            .set_symbol("×")
+            .set_style(Style::default().fg(Theme::ink()).bg(Theme::popover()).add_modifier(Modifier::BOLD));
+    }
     Rect {
         x: inner.x + 1,
         width: inner.width.saturating_sub(2),
@@ -2285,7 +2361,7 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
             Style::default().fg(Theme::muted()).bg(Theme::primary_muted())
         } else {
             Style::default()
-                .fg(Theme::shell())
+                .fg(Theme::on_primary())
                 .bg(Theme::primary())
                 .add_modifier(Modifier::BOLD)
         },
@@ -2310,7 +2386,7 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
                 f.render_widget(Clear, rect);
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
+                    .border_type(Theme::borders())
                     .border_style(Style::default().fg(Theme::rail()))
                     .title(Span::styled(" ⇥ completes ", Theme::faint_style()))
                     .style(Style::default().bg(Theme::popover()));
@@ -2334,12 +2410,19 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
                         Span::styled(
                             format!("@{}", user.username),
                             if picked {
-                                Theme::link().add_modifier(Modifier::BOLD)
+                                Style::default().fg(Theme::on_primary_soft()).add_modifier(Modifier::BOLD)
                             } else {
                                 Theme::text()
                             },
                         ),
-                        Span::styled(format!("  {}", truncate(user.display_name(), 18)), Theme::dim()),
+                        Span::styled(
+                            format!("  {}", truncate(user.display_name(), 18)),
+                            if picked {
+                                Style::default().fg(Theme::on_primary_soft())
+                            } else {
+                                Theme::dim()
+                            },
+                        ),
                     ]);
                     buf.set_line(row.x, row.y, &line, row.width);
                 }

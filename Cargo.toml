@@ -1,6 +1,6 @@
 [package]
 name = "devnull"
-version = "0.4.4"
+version = "0.5.0"
 edition = "2024"
 description = "A terminal client for /dev/null, the social network for developers"
 repository = "https://github.com/mihaidaniel34/dev-null-tui"
@@ -26,6 +26,7 @@ serde_json = "1"
 sha2 = "0.11"
 ssh-key = { version = "0.6", features = ["ed25519", "std", "rand_core", "getrandom"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process"] }
+toml = "0.9"
 unicode-width = "0.2"
 url = "2"
 
