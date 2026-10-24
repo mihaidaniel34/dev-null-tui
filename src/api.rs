@@ -223,8 +223,9 @@ impl Api {
             .await
     }
 
-    pub async fn saved(&self, cursor: Option<&str>) -> Result<Page<Commit>> {
-        self.get(&Self::cursor("/api/v1/saved".into(), cursor)).await
+    /// The commits the user starred, last starred first. Stars replaced saving.
+    pub async fn starred(&self, cursor: Option<&str>) -> Result<Page<Commit>> {
+        self.get(&Self::cursor("/api/v1/starred".into(), cursor)).await
     }
 
     /// Listing notifications marks them all as read, whatever `kind` filters them to.
@@ -255,14 +256,6 @@ impl Api {
         let method = if on { Method::POST } else { Method::DELETE };
         Ok(self
             .write::<Data<Commit>>(method, &format!("/api/v1/commits/{}/star", encode(id)), None)
-            .await?
-            .data)
-    }
-
-    pub async fn save(&self, id: &str, on: bool) -> Result<Commit> {
-        let method = if on { Method::PUT } else { Method::DELETE };
-        Ok(self
-            .write::<Data<Commit>>(method, &format!("/api/v1/commits/{}/bookmark", encode(id)), None)
             .await?
             .data)
     }

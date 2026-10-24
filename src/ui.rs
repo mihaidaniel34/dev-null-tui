@@ -129,7 +129,7 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
             matches!(screen, Screen::Profile(u, _) if Some(u.clone()) == app.username()),
             "g p",
         ),
-        ("□", "Saved", *screen == Screen::Saved, "g b"),
+        ("☆", "Starred", *screen == Screen::Starred, "g b"),
         ("≡", "Settings", *screen == Screen::Settings, "g s"),
     ];
 
@@ -644,7 +644,7 @@ fn empty_message(screen: &Screen) -> &'static str {
         Screen::Log(_) => "Nothing committed yet. Be the first: c",
         Screen::Notifications(Filter::All) => "No notifications. It's quiet in here.",
         Screen::Notifications(_) => "Nothing of that kind. ⇥ for the next filter.",
-        Screen::Saved => "Nothing saved yet. Press b on a commit to keep it here.",
+        Screen::Starred => "Nothing starred yet. Press s on a commit to keep it here.",
         Screen::Profile(_, Tab::Replies) => "No replies yet.",
         Screen::Profile(_, Tab::Commits) => "No commits yet. Everything else went to /dev/null.",
         Screen::Profile(_, Tab::Followers) => "No followers yet.",
@@ -934,11 +934,6 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
         },
         Theme::dim(),
     ));
-    if commit.is_saved == Some(true) {
-        let used: usize = actions.iter().map(|s| s.width()).sum();
-        actions.push(Span::raw(" ".repeat(content.saturating_sub(used + 7))));
-        actions.push(Span::styled("■ Saved", Style::default().fg(Theme::primary())));
-    }
     if role == Role::Focus {
         let full = commit
             .created_at
@@ -1377,7 +1372,11 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
             ]));
         }
     } else {
-        lines.extend(wrap_plain("You're reading as a guest. Sign in to get the Following, Latest and Trending logs, notifications, replies, stars, saves and quotes.", w, Theme::dim()));
+        lines.extend(wrap_plain(
+            "You're reading as a guest. Sign in to get the Following, Latest and Trending logs, notifications, replies, stars and quotes.",
+            w,
+            Theme::dim(),
+        ));
         lines.push(Line::default());
         lines.push(Line::from(vec![
             key_chip("s"),
@@ -1683,7 +1682,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled(" g ", Style::default().fg(Theme::shell()).bg(Theme::primary())),
             Span::styled(
-                "  l log  e trending  f following  n notifications  p profile  b saved  s settings  g top",
+                "  l log  e trending  f following  n notifications  p profile  b starred  s settings  g top",
                 Theme::dim(),
             ),
         ])
@@ -1770,7 +1769,6 @@ pub const SHORTCUTS: &[(&str, &[&str])] = &[
 
 pub const TERMINAL_SHORTCUTS: &[(&str, &[&str])] = &[
     ("Star", &["s"]),
-    ("Save", &["b"]),
     ("Give a pastel de nata", &["p"]),
     ("View images full size", &["v"]),
     ("Open the author's profile", &["a"]),
@@ -1782,7 +1780,7 @@ pub const TERMINAL_SHORTCUTS: &[(&str, &[&str])] = &[
     ("Achievements (on a profile)", &["A"]),
     ("Next tab or filter", &["⇥"]),
     ("Notifications", &["g", "n"]),
-    ("Saved", &["g", "b"]),
+    ("Starred", &["g", "b"]),
     ("Top / bottom", &["g", "g"]),
     ("Refresh", &["R"]),
     ("Back", &["esc"]),
