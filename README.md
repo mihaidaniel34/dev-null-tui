@@ -2,7 +2,7 @@
 
 [/dev/null](https://dev-null.sh), the social network for developers, in your terminal.
 
-It follows the web app's layout and keyboard shortcuts: the Following, Latest and Trending logs, the commit graph rail in each developer's lane color, threads, profiles, notifications, saved commits and a composer that takes images. In kitty and Ghostty, avatars and images show up too. It's written in Rust with [ratatui](https://ratatui.rs).
+It follows the web app's layout and keyboard shortcuts: the Following, Latest and Trending logs, the commit graph rail in each developer's lane color, threads, profiles, notifications, starred commits and a composer that takes images. In kitty and Ghostty, avatars and images show up too. It's written in Rust with [ratatui](https://ratatui.rs).
 
 ![devnull in kitty: the Latest log, with avatars, an image, a quoted commit and a reply branching off the rail](docs/screenshot.png)
 
@@ -30,7 +30,7 @@ To commit without signing in, you also need `ssh-keygen`, which ships with OpenS
 
 ## Two ways in
 
-**Sign in (recommended).** In Settings (`g s`), press `s`. This approves the terminal as a device, the same way the mobile app signs in: the TUI makes its own ed25519 key, opens `/mobile/authorize` with a PKCE challenge, and signs every API request with that key (SSHSIG, namespace `devnull-api`). There's no password and no token. Signing in gives you every log, notifications, replies, stars, saves, pastéis, quotes and follows.
+**Sign in (recommended).** In Settings (`g s`), press `s`. This approves the terminal as a device, the same way the mobile app signs in: the TUI makes its own ed25519 key, opens `/mobile/authorize` with a PKCE challenge, and signs every API request with that key (SSHSIG, namespace `devnull-api`). There's no password and no token. Signing in gives you every log, notifications, replies, stars, pastéis, quotes and follows.
 
 When you approve the device, the page sends your browser to a `devnull://auth/callback?code=…` link meant for the mobile app. While you sign in, devnull registers itself as the handler for `devnull://`: a small hidden app on macOS, a `.desktop` entry on Linux, or a per-user registry key on Windows. Your browser asks to open "devnull sign-in". Allow it, and the TUI finishes signing in on its own. Then it removes the handler, so `devnull://` goes back to the app if you have it.
 
@@ -101,7 +101,7 @@ These are extra, terminal only:
 
 | | |
 |---|---|
-| `s` / `b` / `p` | Star / save / give a pastel de nata (pastéis mode) |
+| `s` / `p` | Star / give a pastel de nata (pastéis mode) |
 | `v` | View a commit's images full size (kitty, Ghostty) |
 | `f` | Follow or unfollow, on a profile or in a list of people |
 | `m` / `B` | Mute / block, on a profile |
@@ -111,7 +111,7 @@ These are extra, terminal only:
 | `w` | Open in your browser |
 | `D` | Delete your commit |
 | `⇥` / `1` `2` `3` | Switch tabs and filters |
-| `g n` / `g b` / `g g` / `G` | Notifications / saved / top / bottom |
+| `g n` / `g b` / `g g` / `G` | Notifications / starred / top / bottom |
 | `R` | Refresh (the log also counts new commits every minute, like the web) |
 | `esc` | Back |
 | `⌃C` / `Q` | Quit |

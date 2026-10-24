@@ -21,7 +21,8 @@ const NEW_COMMITS_EVERY: Duration = Duration::from_secs(60);
 pub enum Screen {
     Log(Log),
     Notifications(Filter),
-    Saved,
+    /// What the user starred, which is how commits are kept since saving went away.
+    Starred,
     /// A profile, on one of its tabs.
     Profile(String, Tab),
     Thread(String),
@@ -33,7 +34,7 @@ impl Screen {
         match self {
             Screen::Log(log) => log.title().into(),
             Screen::Notifications(_) => "Notifications".into(),
-            Screen::Saved => "Saved".into(),
+            Screen::Starred => "Starred".into(),
             Screen::Profile(username, _) => format!("@{username}"),
             Screen::Thread(_) => "Commit".into(),
             Screen::Settings => "Settings".into(),
@@ -863,6 +864,7 @@ impl App {
             commit.stars_count.unwrap_or(1) - 1
         });
         self.update_commit(optimistic);
+        self.feeds.remove(&Screen::Starred);
 
         let api = self.api.clone();
         self.spawn(async move {
@@ -872,27 +874,6 @@ impl App {
                     let _ = e;
                     Msg::CommitUpdated(commit)
                 }
-            }
-        });
-    }
-
-    fn save(&mut self) {
-        if self.needs_sign_in("save commits") {
-            return;
-        }
-        let Some(commit) = self.selected_commit() else { return };
-        let on = !commit.is_saved.unwrap_or(false);
-        let mut optimistic = commit.clone();
-        optimistic.is_saved = Some(on);
-        self.update_commit(optimistic);
-        self.toast(if on { "Saved. Find it under g b." } else { "Removed from saved." });
-        self.feeds.remove(&Screen::Saved);
-
-        let api = self.api.clone();
-        self.spawn(async move {
-            match api.save(&commit.id, on).await {
-                Ok(fresh) => Msg::CommitUpdated(fresh),
-                Err(_) => Msg::CommitUpdated(commit),
             }
         });
     }
@@ -1490,7 +1471,7 @@ impl App {
                 },
                 KeyCode::Char('s') => self.navigate(Screen::Settings),
                 KeyCode::Char('n') => self.navigate(Screen::Notifications(Filter::All)),
-                KeyCode::Char('b') => self.navigate(Screen::Saved),
+                KeyCode::Char('b') => self.navigate(Screen::Starred),
                 KeyCode::Char('g') => {
                     if let Some(feed) = self.feed_mut() {
                         feed.selected = 0;
@@ -1545,7 +1526,8 @@ impl App {
             KeyCode::Char('y') => self.copy_link(),
             KeyCode::Char('w') => self.open_in_browser(),
             KeyCode::Char('s') => self.star(),
-            KeyCode::Char('b') => self.save(),
+            // b saved a commit, and saved commits became stars, so it stars.
+            KeyCode::Char('b') => self.star(),
             KeyCode::Char('p') => self.pastel(),
             KeyCode::Char('f') => self.follow(),
             KeyCode::Char('m') => self.ask_mute_or_block(false),
@@ -2139,7 +2121,7 @@ async fn fetch(api: Api, screen: Screen, cursor: Option<String>, signed: bool, g
             };
             guest_following(&api, &username).await.map_err(err)
         }
-        Screen::Log(_) | Screen::Notifications(_) | Screen::Saved if !signed => Ok(Loaded::Notice(format!(
+        Screen::Log(_) | Screen::Notifications(_) | Screen::Starred if !signed => Ok(Loaded::Notice(format!(
             "{} needs you to sign in: g s. Until then, Following (1) is built from public commits.",
             screen.title()
         ))),
@@ -2155,8 +2137,8 @@ async fn fetch(api: Api, screen: Screen, cursor: Option<String>, signed: bool, g
             let page = api.notifications(filter.query(), cursor).await.map_err(err)?;
             Ok(Loaded::Notifications(page.data, page.meta.next_cursor))
         }
-        Screen::Saved => {
-            let page = api.saved(cursor).await.map_err(err)?;
+        Screen::Starred => {
+            let page = api.starred(cursor).await.map_err(err)?;
             Ok(Loaded::Commits(page.data, page.meta.next_cursor))
         }
         Screen::Profile(username, tab) if tab.is_people() => {

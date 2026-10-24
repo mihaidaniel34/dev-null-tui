@@ -234,8 +234,6 @@ pub struct Commit {
     #[serde(default)]
     pub starred: Option<bool>,
     #[serde(default)]
-    pub is_saved: Option<bool>,
-    #[serde(default)]
     pub pasteis_count: Option<u64>,
     #[serde(default)]
     pub deleted_at: Option<String>,
