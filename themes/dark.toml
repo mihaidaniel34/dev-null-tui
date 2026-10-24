@@ -1,0 +1,29 @@
+# The web's dark palette (DESIGN.md). Every other theme starts from this one unless it says otherwise, so it sets
+# every color.
+
+name = "Dark"
+borders = "rounded"
+
+# Orange, green, purple, cyan, pink and yellow, the six lanes developers pick from.
+lanes = ["#ff8a4c", "#51cf66", "#da77f2", "#3bc9db", "#f06595", "#fcc419"]
+
+[colors]
+shell = "#111112"
+popover = "#1f1f22"
+ink = "#ececec"
+muted = "#a1a1a6"
+faint = "#6b6b70"
+hairline = "#2a2a2d"
+rail = "#36363a"
+wash = "#232326"
+highlight = "#232326"
+primary = "#7aa2f7"
+on_primary = "#111112"
+primary_soft = "#18233a"
+on_primary_soft = "#7aa2f7"
+primary_muted = "#3b5590"
+brand = "#ff6e5a"
+destructive = "#ff6b6b"
+star = "#fcc419"
+code = "#e2c08d"
+

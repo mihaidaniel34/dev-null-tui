@@ -1600,23 +1600,32 @@ impl App {
         }
     }
 
-    pub fn apply_theme(&self) {
-        crate::theme::set_light(match self.config.theme().as_str() {
-            "light" => true,
-            "dark" => false,
-            _ => self.detected_light.unwrap_or(false),
-        });
+    /// Loads the theme from Settings (or DEVNULL_THEME) again, so a theme file you're editing shows its changes.
+    pub fn apply_theme(&mut self) {
+        let id = match self.config.theme().as_str() {
+            "auto" if self.detected_light == Some(true) => "light".to_string(),
+            "auto" => "dark".to_string(),
+            id => id.to_string(),
+        };
+        match crate::theme::load(&id) {
+            Ok(palette) => crate::theme::set(palette),
+            Err(e) => {
+                crate::theme::set(crate::theme::fallback());
+                self.error(format!("{e:#}"));
+            }
+        }
     }
 
     fn on_settings_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Char('t') => {
-                let next = match self.config.theme().as_str() {
-                    "auto" => "dark",
-                    "dark" => "light",
-                    _ => "auto",
-                };
-                self.config.theme = Some(next.into());
+            KeyCode::Char(c @ ('t' | 'T')) => {
+                // auto, then every theme, built-in and yours. T goes back.
+                let mut ids = vec!["auto".to_string()];
+                ids.extend(crate::theme::all());
+                let at = ids.iter().position(|id| *id == self.config.theme()).unwrap_or(0) as isize;
+                let step = if c == 't' { 1 } else { -1 };
+                let next = ids[(at + step).rem_euclid(ids.len() as isize) as usize].clone();
+                self.config.theme = Some(next);
                 let _ = self.config.save();
                 self.apply_theme();
                 if std::env::var("DEVNULL_THEME").is_ok_and(|t| !t.is_empty()) {

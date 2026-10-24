@@ -1,0 +1,26 @@
+# The web's light palette (DESIGN.md).
+
+name = "Light"
+
+lanes = ["#d9480f", "#2f9e44", "#9c36b5", "#0c8599", "#c2255c", "#b7791f"]
+
+[colors]
+shell = "#f6f7f8"
+popover = "#ffffff"
+ink = "#121417"
+muted = "#5b616b"
+faint = "#8d939c"
+hairline = "#e1e4e8"
+rail = "#d3d7dd"
+wash = "#eef0f2"
+highlight = "#eef0f2"
+primary = "#3b6fe0"
+on_primary = "#f6f7f8"
+primary_soft = "#e8effc"
+on_primary_soft = "#3b6fe0"
+primary_muted = "#d2def9"
+brand = "#d92d1f"
+destructive = "#c92a2a"
+star = "#d69e0b"
+code = "#8a5a00"
+

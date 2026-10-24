@@ -14,7 +14,7 @@ pub struct Config {
     /// Whether the device key was approved on the web.
     #[serde(default)]
     pub signed_in: bool,
-    /// "auto" (the default) follows the terminal's background; "dark" or "light" pick one.
+    /// "auto" (the default) follows the terminal's background; anything else is a theme's id, like "windows-98".
     #[serde(default)]
     pub theme: Option<String>,
 }

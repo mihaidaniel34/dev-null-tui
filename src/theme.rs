@@ -1,9 +1,14 @@
-//! The web's dark and light palettes (DESIGN.md), downsampled to the 256-color cube on terminals without truecolor.
+//! Themes: the web's dark and light palettes (DESIGN.md), Windows 98 and whatever else is in themes/, as TOML files,
+//! plus your own from the config dir. Colors are downsampled to the 256-color cube on terminals without truecolor.
 
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::{OnceLock, RwLock};
 
+use anyhow::{Context, Result, anyhow, bail};
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::BorderType;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::model::User;
@@ -48,17 +53,6 @@ pub fn rgb(hex: u32) -> Color {
         }
     };
     Color::Indexed(16 + 36 * cube(r) + 6 * cube(g) + cube(b))
-}
-
-static LIGHT: AtomicBool = AtomicBool::new(false);
-
-/// Switches every color between the web's dark and light palettes. It takes effect on the next frame.
-pub fn set_light(light: bool) {
-    LIGHT.store(light, Ordering::Relaxed);
-}
-
-pub fn is_light() -> bool {
-    LIGHT.load(Ordering::Relaxed)
 }
 
 /// Asks the terminal for its background color (OSC 11) and says whether it's light. DA1 is asked right after, since
@@ -129,63 +123,367 @@ fn background(bytes: &[u8]) -> Option<(f32, f32, f32)> {
     Some((parts.next()??, parts.next()??, parts.next()??))
 }
 
-/// A color in each palette, as DESIGN.md has it.
-fn pick(dark: u32, light: u32) -> u32 {
-    if is_light() { light } else { dark }
+// Themes -------------------------------------------------------------------------------------------------------
+
+/// The themes that come with devnull, in the order `t` goes through them. Adding one is a TOML file in themes/ and
+/// a line here.
+const BUILT_IN: &[(&str, &str)] = &[
+    ("dark", include_str!("../themes/dark.toml")),
+    ("light", include_str!("../themes/light.toml")),
+    ("windows-98", include_str!("../themes/windows-98.toml")),
+];
+
+/// "#c0c0c0", "c0c0c0" or "#ccc", as 0xRRGGBB.
+pub fn parse_hex(text: &str) -> Option<u32> {
+    let hex = text.strip_prefix('#').unwrap_or(text);
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    match hex.len() {
+        6 => u32::from_str_radix(hex, 16).ok(),
+        3 => {
+            let v = u32::from_str_radix(hex, 16).ok()?;
+            Some(((v >> 8) & 0xf) * 0x110000 + ((v >> 4) & 0xf) * 0x1100 + (v & 0xf) * 0x11)
+        }
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Hex(u32);
+
+impl<'de> Deserialize<'de> for Hex {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let text = String::deserialize(d)?;
+        parse_hex(&text)
+            .map(Hex)
+            .ok_or_else(|| serde::de::Error::custom(format!("{text:?} isn't a color like \"#c0c0c0\"")))
+    }
+}
+
+macro_rules! colors {
+    ($($name:ident),* $(,)?) => {
+        /// A theme's colors, as 0xRRGGBB.
+        #[derive(Clone, Copy, Default)]
+        struct Colors {
+            $($name: u32,)*
+        }
+
+        /// The colors a theme file sets. The rest come from the theme it extends.
+        #[derive(Default, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ColorsFile {
+            $($name: Option<Hex>,)*
+        }
+
+        impl ColorsFile {
+            fn over(&self, base: Colors) -> Colors {
+                Colors {
+                    $($name: self.$name.map_or(base.$name, |h| h.0),)*
+                }
+            }
+
+            fn missing(&self) -> Vec<&'static str> {
+                let mut missing = Vec::new();
+                $(if self.$name.is_none() {
+                    missing.push(stringify!($name));
+                })*
+                missing
+            }
+        }
+    };
+}
+
+colors!(
+    shell,
+    popover,
+    ink,
+    muted,
+    faint,
+    hairline,
+    rail,
+    wash,
+    highlight,
+    primary,
+    on_primary,
+    primary_soft,
+    on_primary_soft,
+    primary_muted,
+    brand,
+    destructive,
+    star,
+    code,
+);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct File {
+    name: Option<String>,
+    extends: Option<String>,
+    borders: Option<Borders>,
+    #[serde(default)]
+    colors: ColorsFile,
+    lanes: Option<[Hex; 6]>,
+    title_bar: Option<TitleBarFile>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Borders {
+    Rounded,
+    Plain,
+    Thick,
+    Double,
+}
+
+/// One color, or two to fade between from left to right.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(untagged)]
+enum FadeFile {
+    One(Hex),
+    Two([Hex; 2]),
+}
+
+impl FadeFile {
+    fn ends(self) -> (u32, u32) {
+        match self {
+            FadeFile::One(c) => (c.0, c.0),
+            FadeFile::Two([a, b]) => (a.0, b.0),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TitleBarFile {
+    active: FadeFile,
+    active_ink: Hex,
+    inactive: Option<FadeFile>,
+    inactive_ink: Option<Hex>,
+}
+
+/// Commit headers drawn as window title bars.
+#[derive(Clone, Copy)]
+pub struct TitleBar {
+    /// The selected commit's, fading from the first color to the second, and its text.
+    pub active: (u32, u32),
+    pub active_ink: u32,
+    /// Everyone else's, when the theme has one.
+    pub inactive: Option<((u32, u32), u32)>,
+}
+
+#[derive(Clone)]
+pub struct Palette {
+    pub name: String,
+    colors: Colors,
+    lanes: [u32; 6],
+    borders: BorderType,
+    title_bar: Option<TitleBar>,
+}
+
+/// Where your own themes go: `themes/` in the config dir, one TOML file each, named after the theme's id.
+pub fn custom_dir() -> PathBuf {
+    crate::config::dir().join("themes")
+}
+
+/// Every theme's id: the built-in ones, then yours.
+pub fn all() -> Vec<String> {
+    let mut ids: Vec<String> = BUILT_IN.iter().map(|(id, _)| id.to_string()).collect();
+    let mut custom: Vec<String> = fs::read_dir(custom_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension()? == "toml").then(|| path.file_stem()?.to_str().map(str::to_string))?
+        })
+        .filter(|id| !ids.contains(id))
+        .collect();
+    custom.sort();
+    ids.append(&mut custom);
+    ids
+}
+
+/// A theme by its id, reading your themes folder first, so a file there can also change a built-in theme.
+pub fn load(id: &str) -> Result<Palette> {
+    resolve(id, false, 0)
+}
+
+fn resolve(id: &str, built_in_only: bool, depth: usize) -> Result<Palette> {
+    if depth > 8 {
+        bail!("The theme {id} goes round in circles with extends.");
+    }
+    let path = custom_dir().join(format!("{id}.toml"));
+    let custom = !built_in_only && path.is_file();
+    let built_in = BUILT_IN.iter().find(|(i, _)| *i == id).map(|(_, text)| *text);
+    let text = if custom {
+        fs::read_to_string(&path).with_context(|| format!("Could not read {}.", path.display()))?
+    } else {
+        built_in.with_context(|| format!("There's no theme called {id}."))?.to_string()
+    };
+    let file: File = toml::from_str(&text).map_err(|e| {
+        let line = e.span().map(|s| text[..s.start].matches('\n').count() + 1);
+        // serde lists every field it expected, which is too long to read in a toast.
+        let message = e.message();
+        let message = message.split(", expected one of").next().unwrap_or(message);
+        anyhow!("{id}.toml{}: {message}", line.map(|l| format!(" line {l}")).unwrap_or_default())
+    })?;
+
+    // A theme starts from the one it extends, or from dark. A file of yours named after a built-in theme starts from
+    // that theme.
+    let base = match (&file.extends, custom && built_in.is_some()) {
+        (Some(parent), _) if parent == id => Some(resolve(id, true, depth + 1)?),
+        (Some(parent), _) => Some(resolve(parent, false, depth + 1)?),
+        (None, true) => Some(resolve(id, true, depth + 1)?),
+        (None, false) if id != "dark" => Some(resolve("dark", false, depth + 1)?),
+        (None, false) => None,
+    };
+    if base.is_none() {
+        let mut missing = file.colors.missing();
+        if file.lanes.is_none() {
+            missing.push("lanes");
+        }
+        if !missing.is_empty() {
+            bail!(
+                "{id}.toml extends nothing, so it needs every color. Missing: {}.",
+                missing.join(", ")
+            );
+        }
+    }
+
+    Ok(Palette {
+        name: file.name.clone().unwrap_or_else(|| id.to_string()),
+        colors: file.colors.over(base.as_ref().map(|b| b.colors).unwrap_or_default()),
+        lanes: file
+            .lanes
+            .map(|lanes| lanes.map(|h| h.0))
+            .or(base.as_ref().map(|b| b.lanes))
+            .unwrap_or_default(),
+        borders: match file.borders {
+            Some(Borders::Rounded) => BorderType::Rounded,
+            Some(Borders::Plain) => BorderType::Plain,
+            Some(Borders::Thick) => BorderType::Thick,
+            Some(Borders::Double) => BorderType::Double,
+            None => base.as_ref().map_or(BorderType::Rounded, |b| b.borders),
+        },
+        title_bar: match file.title_bar {
+            Some(t) => Some(TitleBar {
+                active: t.active.ends(),
+                active_ink: t.active_ink.0,
+                inactive: t.inactive.map(|f| (f.ends(), t.inactive_ink.unwrap_or(t.active_ink).0)),
+            }),
+            None => base.as_ref().and_then(|b| b.title_bar),
+        },
+    })
+}
+
+/// The built-in dark theme, for when the one asked for doesn't load.
+pub fn fallback() -> Palette {
+    resolve("dark", true, 0).expect("the built-in dark theme loads")
+}
+
+fn current() -> &'static RwLock<Palette> {
+    static CURRENT: OnceLock<RwLock<Palette>> = OnceLock::new();
+    CURRENT.get_or_init(|| RwLock::new(fallback()))
+}
+
+/// Switches every color to this theme's. It takes effect on the next frame.
+pub fn set(palette: Palette) {
+    *current().write().unwrap_or_else(|e| e.into_inner()) = palette;
+}
+
+fn read<T>(f: impl FnOnce(&Palette) -> T) -> T {
+    f(&current().read().unwrap_or_else(|e| e.into_inner()))
+}
+
+fn colors() -> Colors {
+    read(|p| p.colors)
+}
+
+/// The color a fraction of the way from one to the other.
+pub fn fade(from: u32, to: u32, t: f32) -> u32 {
+    let mix = |shift: u32| {
+        let (a, b) = (((from >> shift) & 0xff) as f32, ((to >> shift) & 0xff) as f32);
+        ((a + (b - a) * t.clamp(0.0, 1.0)).round() as u32) << shift
+    };
+    mix(16) | mix(8) | mix(0)
 }
 
 pub struct Theme;
 
 impl Theme {
+    /// The theme's name, as Settings shows it.
+    pub fn name() -> String {
+        read(|p| p.name.clone())
+    }
+    pub fn borders() -> BorderType {
+        read(|p| p.borders)
+    }
+    pub fn title_bar() -> Option<TitleBar> {
+        read(|p| p.title_bar)
+    }
+
     pub fn shell_hex() -> u32 {
-        pick(0x111112, 0xf6f7f8)
+        colors().shell
     }
     pub fn wash_hex() -> u32 {
-        pick(0x232326, 0xeef0f2)
+        colors().wash
     }
     pub fn shell() -> Color {
-        rgb(Self::shell_hex())
+        rgb(colors().shell)
     }
     pub fn popover() -> Color {
-        rgb(pick(0x1f1f22, 0xffffff))
+        rgb(colors().popover)
     }
     pub fn ink() -> Color {
-        rgb(pick(0xececec, 0x121417))
+        rgb(colors().ink)
     }
     pub fn muted() -> Color {
-        rgb(pick(0xa1a1a6, 0x5b616b))
+        rgb(colors().muted)
     }
     pub fn faint() -> Color {
-        rgb(pick(0x6b6b70, 0x8d939c))
+        rgb(colors().faint)
     }
     pub fn hairline() -> Color {
-        rgb(pick(0x2a2a2d, 0xe1e4e8))
+        rgb(colors().hairline)
     }
     pub fn rail() -> Color {
-        rgb(pick(0x36363a, 0xd3d7dd))
+        rgb(colors().rail)
     }
     pub fn wash() -> Color {
-        rgb(Self::wash_hex())
+        rgb(colors().wash)
+    }
+    /// Behind the selected commit.
+    pub fn highlight() -> Color {
+        rgb(colors().highlight)
     }
     pub fn primary() -> Color {
-        rgb(pick(0x7aa2f7, 0x3b6fe0))
+        rgb(colors().primary)
+    }
+    /// Text on a primary button.
+    pub fn on_primary() -> Color {
+        rgb(colors().on_primary)
     }
     pub fn primary_soft() -> Color {
-        rgb(pick(0x18233a, 0xe8effc))
+        rgb(colors().primary_soft)
+    }
+    /// Text on primary_soft, like the page you're on in the sidebar.
+    pub fn on_primary_soft() -> Color {
+        rgb(colors().on_primary_soft)
     }
     /// A quieter primary, for buttons that aren't the main action.
     pub fn primary_muted() -> Color {
-        rgb(pick(0x3b5590, 0xd2def9))
+        rgb(colors().primary_muted)
     }
     /// The web's brand red, for types in highlighted code.
     pub fn brand() -> Color {
-        rgb(pick(0xff6e5a, 0xd92d1f))
+        rgb(colors().brand)
     }
     pub fn destructive() -> Color {
-        rgb(pick(0xff6b6b, 0xc92a2a))
+        rgb(colors().destructive)
     }
     pub fn star() -> Color {
-        rgb(pick(0xfcc419, 0xd69e0b))
+        rgb(colors().star)
     }
 
     pub fn lane(index: u8) -> Color {
@@ -193,14 +491,7 @@ impl Theme {
     }
 
     pub fn lane_hex(index: u8) -> u32 {
-        match index % 6 {
-            0 => pick(0xff8a4c, 0xd9480f),
-            1 => pick(0x51cf66, 0x2f9e44),
-            2 => pick(0xda77f2, 0x9c36b5),
-            3 => pick(0x3bc9db, 0x0c8599),
-            4 => pick(0xf06595, 0xc2255c),
-            _ => pick(0xfcc419, 0xb7791f),
-        }
+        read(|p| p.lanes[index as usize % 6])
     }
 
     /// The color the web draws a user in: their chosen lane or custom color, or the same hash of their id the web
@@ -213,7 +504,7 @@ impl Theme {
         match &user.lane {
             Some(Value::Number(n)) => Self::lane_hex(n.as_u64().unwrap_or(0) as u8),
             Some(Value::String(hex)) if hex.len() == 7 && hex.starts_with('#') => {
-                u32::from_str_radix(&hex[1..], 16).unwrap_or_else(|_| Self::lane_hex(automatic_lane(&user.id)))
+                parse_hex(hex).unwrap_or_else(|| Self::lane_hex(automatic_lane(&user.id)))
             }
             _ => Self::lane_hex(automatic_lane(&user.id)),
         }
@@ -235,7 +526,7 @@ impl Theme {
         Style::default().fg(Self::primary())
     }
     pub fn code() -> Style {
-        Style::default().fg(rgb(pick(0xe2c08d, 0x8a5a00))).bg(Self::wash())
+        Style::default().fg(rgb(colors().code)).bg(Self::wash())
     }
 }
 
@@ -261,6 +552,28 @@ mod tests {
         assert!(r < 0.2);
         assert!(background(b"\x1b[?1;2c").is_none());
         assert!(!answered(b"\x1b]11;rgb:0/0/0"));
+    }
+
+    #[test]
+    fn every_built_in_theme_loads() {
+        for (id, _) in BUILT_IN {
+            let palette = resolve(id, true, 0).unwrap_or_else(|e| panic!("{id}: {e:#}"));
+            assert!(!palette.name.is_empty());
+        }
+        let w98 = resolve("windows-98", true, 0).unwrap();
+        assert_eq!(w98.colors.shell, 0xc0c0c0);
+        assert_eq!(w98.borders, BorderType::Plain);
+        assert!(w98.title_bar.is_some_and(|t| t.active == (0x000080, 0x1084d0)));
+    }
+
+    #[test]
+    fn a_theme_only_sets_what_differs() {
+        let file: File = toml::from_str("extends = \"light\"\n[colors]\nprimary = \"#f0a\"\n").unwrap();
+        assert_eq!(file.colors.over(resolve("light", true, 0).unwrap().colors).primary, 0xff00aa);
+        assert!(toml::from_str::<File>("[colors]\nprimry = \"#fff\"\n").is_err());
+        assert!(toml::from_str::<File>("[colors]\nink = \"white\"\n").is_err());
+        assert_eq!(parse_hex("#C0C0C0"), Some(0xc0c0c0));
+        assert_eq!(parse_hex("+12345"), None);
     }
 
     #[test]
