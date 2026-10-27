@@ -31,6 +31,7 @@ pub struct Page<T> {
 pub struct User {
     #[serde(deserialize_with = "string_or_number")]
     pub id: String,
+    #[serde(alias = "handle")]
     pub username: String,
     #[serde(default)]
     pub name: Option<String>,
