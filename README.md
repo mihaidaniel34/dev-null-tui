@@ -2,7 +2,7 @@
 
 [/dev/null](https://dev-null.sh), the social network for developers, in your terminal.
 
-It follows the web app's layout and keyboard shortcuts: the Following, Latest and Trending logs, the commit graph rail in each developer's lane color, threads, profiles, notifications, starred commits and a composer that takes images. In kitty and Ghostty, avatars and images show up too. It's written in Rust with [ratatui](https://ratatui.rs).
+It follows the web app's layout and keyboard shortcuts: the Following, Latest and Trending logs, the commit graph rail in each developer's lane color, threads, profiles, notifications, starred commits, Remotes (direct messages) and a composer that takes images. In kitty and Ghostty, avatars and images show up too. It's written in Rust with [ratatui](https://ratatui.rs).
 
 ![devnull in kitty: the Latest log, with avatars, an image, a quoted commit and a reply branching off the rail](docs/screenshot.png)
 
@@ -50,6 +50,21 @@ You can revoke the device on the web under Settings → Devices.
 - **The composer** suggests developers as you type `@`, and `⇥` completes. A draft you close is kept, even across restarts.
 - **Code blocks** are highlighted the way the web highlights them, when you're signed in.
 - **Safety:** `m` mutes and `B` blocks someone from their profile, and `!` reports a commit to the moderators.
+
+## Remotes
+
+Remotes, /dev/null's direct messages, are in the sidebar (`g r`) when you're signed in. The inbox has Open and Stashed tabs, a search for names and `@handles`, and a count of what you haven't pulled yet. `⏎` opens a conversation.
+
+- **Starting one:** `M` on someone's profile (there's a Remote button next to Follow), on a person in a list, or on a commit's author opens a conversation with them. Searching the inbox with `/` also lists people you haven't talked to yet under "Start a conversation", and `n` opens a picker to search everyone. It says why if you can't push to someone yet.
+- **In the inbox:** `x` stashes or unstashes, `/` searches, `⇥` switches tabs, `S` turns Share pulls on or off, `a` opens their profile.
+- **In a conversation:** `j`/`k` pick a message, `i` or `⏎` writes (`⏎` pushes, `alt ⏎` adds a line, `esc` stops and keeps the draft), `r` replies to the picked message, `e` then `1`–`6` reacts, `y` copies it, `v` views its images, `x` stashes. Your messages sit on the right, theirs on the left, with reactions, the time under each run and, when you both share pulls, when they pulled.
+- It polls while it's open, so new messages and reactions appear on their own. A conversation that's closed to you (a request you haven't merged, someone who doesn't follow you, Remotes turned off) says so instead of opening the composer.
+
+Not in the terminal yet: orgs, voice notes, and sending images. Open those on the web or in the app.
+
+## When the server changes
+
+devnull talks to the signed API of the [/dev/null server](https://github.com/dev-null-sh/dev-null.sh), which has no published spec. [`docs/api-contract.md`](docs/api-contract.md) lists every endpoint devnull uses and the fields it reads, `scripts/check-api.sh` shows what changed in those server files since the contract was last checked, and a weekly workflow runs it. The types in `src/model.rs` ignore fields they don't know and default the ones that go missing, so most changes cost nothing.
 
 ## Themes
 

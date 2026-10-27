@@ -305,6 +305,127 @@ impl Api {
         Ok(serde_json::from_slice::<Data<CurrentUser>>(&bytes)?.data)
     }
 
+    // Remotes -----------------------------------------------------------------------------------------------------
+
+    /// What a Remotes answer failed to parse as says which one, so a change on the server is easy to place.
+    fn parse<T: DeserializeOwned>(bytes: &[u8], what: &str) -> Result<T> {
+        serde_json::from_slice(bytes).map_err(|e| anyhow::anyhow!("/dev/null changed its {what} answer ({e}). Update devnull."))
+    }
+
+    /// A page of the inbox. `tab` is open or stashed; `term` matches names and handles; `before` is the last
+    /// conversation of the page before.
+    pub async fn remotes(&self, tab: &str, term: &str, before: Option<&str>) -> Result<Inbox> {
+        let mut path = format!("/api/v1/remotes?tab={}", encode(tab));
+        if !term.is_empty() {
+            path.push_str(&format!("&q={}", encode(term)));
+        }
+        if let Some(before) = before {
+            path.push_str(&format!("&before={}", encode(before)));
+        }
+        let (_, bytes) = self.send(Method::GET, &path, None, None).await?;
+        Self::parse(&bytes, "inbox")
+    }
+
+    /// The latest messages of a conversation, those after `after` when polling (with the reactions changed since
+    /// `reactions_after`), or the ones before `before` when scrolling back.
+    pub async fn remote_thread(
+        &self,
+        handle: &str,
+        after: Option<i64>,
+        before: Option<i64>,
+        reactions_after: Option<i64>,
+    ) -> Result<Thread> {
+        let mut query = Vec::new();
+        if let Some(after) = after {
+            query.push(format!("after={after}"));
+        }
+        if let Some(before) = before {
+            query.push(format!("before={before}"));
+        }
+        if let Some(version) = reactions_after {
+            query.push(format!("reactions_after={version}"));
+        }
+        let mut path = format!("/api/v1/remotes/@{}/messages", encode(handle));
+        if !query.is_empty() {
+            path.push('?');
+            path.push_str(&query.join("&"));
+        }
+        let (_, bytes) = self.send(Method::GET, &path, None, None).await?;
+        Ok(Self::parse::<Data<Thread>>(&bytes, "conversation")?.data)
+    }
+
+    /// Pushes a message. `client_id` is a UUID the server dedupes retries by.
+    pub async fn push_remote(&self, handle: &str, body: &str, client_id: &str, reply_to: Option<i64>) -> Result<Message> {
+        let mut payload = json!({ "body": body, "client_id": client_id });
+        if let Some(id) = reply_to {
+            payload["reply_to_id"] = json!(id);
+        }
+        let (_, bytes) = self
+            .send(
+                Method::POST,
+                &format!("/api/v1/remotes/@{}/messages", encode(handle)),
+                Some(payload),
+                None,
+            )
+            .await?;
+        Ok(Self::parse::<Data<Message>>(&bytes, "message")?.data)
+    }
+
+    /// Pulls a conversation through a message. It only ever moves forward.
+    pub async fn pull_remote(&self, handle: &str, through: i64) -> Result<()> {
+        let body = json!({ "through": through });
+        self.send(Method::PUT, &format!("/api/v1/remotes/@{}/read", encode(handle)), Some(body), None)
+            .await
+            .map(|_| ())
+    }
+
+    /// Stashes a conversation for the user only, or pops it back into Open.
+    pub async fn stash_remote(&self, handle: &str, on: bool) -> Result<()> {
+        let method = if on { Method::POST } else { Method::DELETE };
+        self.write_empty(method, &format!("/api/v1/remotes/@{}/archive", encode(handle)))
+            .await
+    }
+
+    /// Reacts with an emoji, or takes the reaction back. Answers with the message's reactions.
+    pub async fn react(&self, message: i64, emoji: &str, on: bool) -> Result<Vec<Reaction>> {
+        #[derive(serde::Deserialize)]
+        struct Reactions {
+            #[serde(default)]
+            reactions: Vec<Reaction>,
+        }
+        let method = if on { Method::POST } else { Method::DELETE };
+        let (_, bytes) = self
+            .send(
+                method,
+                &format!("/api/v1/remotes/messages/{message}/reactions"),
+                Some(json!({ "emoji": emoji })),
+                None,
+            )
+            .await?;
+        Ok(Self::parse::<Reactions>(&bytes, "reaction")?.reactions)
+    }
+
+    /// People to start a remote with, each with the reason they can't be messaged if there is one.
+    pub async fn remote_candidates(&self, term: &str) -> Result<Vec<Candidate>> {
+        #[derive(serde::Deserialize)]
+        struct Candidates {
+            #[serde(default)]
+            candidates: Vec<Candidate>,
+        }
+        let (_, bytes) = self
+            .send(Method::GET, &format!("/api/v1/remotes/candidates?q={}", encode(term)), None, None)
+            .await?;
+        Ok(Self::parse::<Candidates>(&bytes, "people")?.candidates)
+    }
+
+    /// Who can push to the user, and whether they share pulls.
+    pub async fn set_remote_preferences(&self, from: &str, pull_receipts: bool) -> Result<()> {
+        let body = json!({ "from": from, "pull_receipts": pull_receipts });
+        self.send(Method::PUT, "/api/v1/me/remote-preferences", Some(body), None)
+            .await
+            .map(|_| ())
+    }
+
     pub fn http(&self) -> &reqwest::Client {
         &self.http
     }
@@ -318,4 +439,89 @@ pub fn encode(segment: &str) -> String {
 
 pub fn api_error(err: &anyhow::Error) -> Option<&ApiError> {
     err.downcast_ref::<ApiError>()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    use super::*;
+
+    /// Answers each request with the next canned body and sends back what it was asked: the request line and body.
+    fn serve(answers: Vec<&'static str>) -> (String, std::thread::JoinHandle<Vec<(String, String)>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for answer in answers {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 8192];
+                let n = stream.read(&mut buf).unwrap();
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let line = request.lines().next().unwrap_or_default().to_string();
+                let body = request.split("\r\n\r\n").nth(1).unwrap_or_default().to_string();
+                seen.push((line, body));
+                let status = if answer.is_empty() { "204 No Content" } else { "200 OK" };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                    answer.len()
+                );
+            }
+            seen
+        });
+        (base, handle)
+    }
+
+    #[tokio::test]
+    async fn remotes_calls_go_where_the_server_expects() {
+        let (base, server) = serve(vec![
+            r#"{"data":[],"has_more":false,"unread_count":3,"requests_count":0}"#,
+            r#"{"data":{"partner":{"id":2,"handle":"petox03"},"messages":[],"access":"open"}}"#,
+            r#"{"data":{"id":9,"user_id":1,"body":"hi"}}"#,
+            "",
+            "",
+            r#"{"reactions":[{"user_id":1,"emoji":"👍"}]}"#,
+            r#"{"candidates":[{"user":{"id":3,"handle":"x"},"reason":"No."}]}"#,
+        ]);
+        let api = Api::new(base, None);
+
+        let inbox = api.remotes("stashed", "al", Some("abc")).await.unwrap();
+        assert_eq!(inbox.unread_count, 3);
+        let thread = api.remote_thread("petox03", Some(5), None, Some(2)).await.unwrap();
+        assert_eq!(thread.access, "open");
+        let message = api.push_remote("petox03", "hi", "id-1", Some(4)).await.unwrap();
+        assert_eq!(message.id, 9);
+        api.pull_remote("petox03", 9).await.unwrap();
+        api.stash_remote("petox03", true).await.unwrap();
+        assert_eq!(api.react(9, "👍", true).await.unwrap()[0].emoji, "👍");
+        assert_eq!(api.remote_candidates("x y").await.unwrap()[0].reason.as_deref(), Some("No."));
+
+        let seen = server.join().unwrap();
+        let lines: Vec<&str> = seen.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(
+            lines,
+            [
+                "GET /api/v1/remotes?tab=stashed&q=al&before=abc HTTP/1.1",
+                "GET /api/v1/remotes/@petox03/messages?after=5&reactions_after=2 HTTP/1.1",
+                "POST /api/v1/remotes/@petox03/messages HTTP/1.1",
+                "PUT /api/v1/remotes/@petox03/read HTTP/1.1",
+                "POST /api/v1/remotes/@petox03/archive HTTP/1.1",
+                "POST /api/v1/remotes/messages/9/reactions HTTP/1.1",
+                "GET /api/v1/remotes/candidates?q=x%20y HTTP/1.1",
+            ]
+        );
+        let pushed: Value = serde_json::from_str(&seen[2].1).unwrap();
+        assert_eq!(pushed, json!({ "body": "hi", "client_id": "id-1", "reply_to_id": 4 }));
+        assert_eq!(serde_json::from_str::<Value>(&seen[3].1).unwrap(), json!({ "through": 9 }));
+        assert_eq!(serde_json::from_str::<Value>(&seen[5].1).unwrap(), json!({ "emoji": "👍" }));
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_changed_says_which_one() {
+        let (base, _server) = serve(vec![r#"{"data":{"messages":[]}}"#]);
+        let error = Api::new(base, None).remote_thread("petox03", None, None, None).await.unwrap_err();
+        assert!(error.to_string().contains("changed its conversation answer"), "{error}");
+    }
 }

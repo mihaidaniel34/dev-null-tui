@@ -14,6 +14,8 @@ use crate::model::*;
 use crate::text::{self, body_lines, count, day_label, relative_time, truncate, width, wrap_plain};
 use crate::theme::{self, Theme, rgb};
 
+mod remotes_view;
+
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const LIST_BODY_LINES: usize = 10;
 
@@ -98,6 +100,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.composer.is_some() {
         draw_composer(f, app, center.union(right).intersection(area), area);
     }
+    if app.remotes.picker.is_some() {
+        remotes_view::draw_picker(f, app, area);
+    }
     if app.input.is_some() {
         draw_input(f, app, area);
     }
@@ -120,9 +125,14 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     buf.set_line(area.x + if wide { 3 } else { 1 }, area.y + 1, &Line::from(logo_line), area.width);
 
     let screen = app.screen();
-    let items: [(&str, &str, bool, &str); 5] = [
+    let remotes = match app.remotes.unread {
+        0 => "Remotes".to_string(),
+        n => format!("Remotes ({n})"),
+    };
+    let items: [(&str, &str, bool, &str); 6] = [
         ("◉", "Log", matches!(screen, Screen::Log(_)), "g l"),
         ("◔", "Notifications", matches!(screen, Screen::Notifications(_)), "g n"),
+        ("✉", &remotes, matches!(screen, Screen::Remotes | Screen::Remote(_)), "g r"),
         (
             "◯",
             "Profile",
@@ -275,6 +285,10 @@ fn draw_center(f: &mut Frame, app: &mut App, area: Rect) {
                     ..area
                 },
             );
+            return;
+        }
+        Screen::Remotes | Screen::Remote(_) => {
+            remotes_view::draw(f, app, area);
             return;
         }
         Screen::Notifications(active) => {
@@ -430,6 +444,10 @@ fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile)
                 Style::default().fg(Theme::on_primary()).bg(Theme::primary())
             },
         ));
+    }
+    if !mine && app.me.as_ref().is_some_and(|me| me.remotes.is_some()) {
+        counts.push(Span::raw(" "));
+        counts.push(Span::styled(" Remote · M ", Style::default().fg(Theme::ink()).bg(Theme::wash())));
     }
     lines.push(Line::from(counts));
 
@@ -1742,17 +1760,41 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled(" g ", Style::default().fg(Theme::on_primary()).bg(Theme::primary())),
             Span::styled(
-                "  l log  e trending  f following  n notifications  p profile  b starred  s settings  g top",
+                "  l log  e trending  f following  n notifications  r remotes  p profile  b starred  s settings  g top",
                 Theme::dim(),
             ),
         ])
     } else {
         let hints: &[(&str, &str)] = match app.screen() {
             Screen::Settings => &[("g l", "log"), ("?", "help"), ("Q", "quit")],
+            Screen::Remotes if app.remotes.searching => &[("⏎", "search"), ("esc", "clear")],
+            Screen::Remotes => &[
+                ("j/k", "move"),
+                ("⏎", "open"),
+                ("n", "new"),
+                ("x", "stash"),
+                ("/", "search"),
+                ("S", "share pulls"),
+                ("⇥", "tabs"),
+                ("esc", "back"),
+            ],
+            Screen::Remote(handle) if app.remotes.chats.get(handle).is_some_and(|c| c.typing) => {
+                &[("⏎", "push"), ("alt ⏎", "new line"), ("esc", "stop")]
+            }
+            Screen::Remote(_) => &[
+                ("j/k", "move"),
+                ("i", "write"),
+                ("r", "reply"),
+                ("e", "react"),
+                ("v", "images"),
+                ("x", "stash"),
+                ("esc", "back"),
+            ],
             Screen::Profile(..) => &[
                 ("j/k", "move"),
                 ("⏎", "open"),
                 ("f", "follow"),
+                ("M", "remote"),
                 ("m", "mute"),
                 ("⇥", "tabs"),
                 ("esc", "back"),
@@ -1840,6 +1882,7 @@ pub const SHORTCUTS: &[(&str, &[&str])] = &[
     ("Go to trending", &["g", "e"]),
     ("Go to your profile", &["g", "p"]),
     ("Go to settings", &["g", "s"]),
+    ("Go to Remotes (messages)", &["g", "r"]),
     ("Show this list", &["?"]),
 ];
 
@@ -1852,11 +1895,14 @@ pub const TERMINAL_SHORTCUTS: &[(&str, &[&str])] = &[
     ("Report a commit", &["!"]),
     ("Delete your commit", &["D"]),
     ("Follow or unfollow", &["f"]),
+    ("Start a remote (on a profile)", &["M"]),
     ("Mute / block (on a profile)", &["m", "B"]),
     ("Achievements (on a profile)", &["A"]),
     ("Next tab or filter", &["⇥"]),
     ("Notifications", &["g", "n"]),
     ("Starred", &["g", "b"]),
+    ("Remotes: new, stash, share pulls", &["n", "x", "S"]),
+    ("In a conversation: write, reply, react", &["i", "r", "e"]),
     ("Top / bottom", &["g", "g"]),
     ("Refresh", &["R"]),
     ("Back", &["esc"]),
