@@ -1672,13 +1672,12 @@ impl App {
                     self.toast("DEVNULL_ICONS is set, so it wins over this setting.");
                 }
             }
-            KeyCode::Char(c @ ('t' | 'T')) if crate::config::THEME_PICKER => {
-                // auto, then every theme, built-in and yours. T goes back.
-                let mut ids = vec!["auto".to_string()];
-                ids.extend(crate::theme::all());
+            KeyCode::Char(c @ ('t' | 'T')) => {
+                // auto, dark, light. T goes back.
+                let ids = crate::config::THEMES;
                 let at = ids.iter().position(|id| *id == self.config.theme()).unwrap_or(0) as isize;
                 let step = if c == 't' { 1 } else { -1 };
-                let next = ids[(at + step).rem_euclid(ids.len() as isize) as usize].clone();
+                let next = ids[(at + step).rem_euclid(ids.len() as isize) as usize].to_string();
                 self.config.theme = Some(next);
                 let _ = self.config.save();
                 self.apply_theme();

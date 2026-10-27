@@ -1125,18 +1125,28 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
             vec![Line::default(), Line::from(Span::styled(full, Theme::faint_style()))],
         );
     }
-    // The node goes on the actions, a stretch of rail below the avatar however short the commit.
+    // The node goes on the actions, right below the avatar. A short commit with nothing to branch to has no node,
+    // so its actions follow its text, beside the avatar, instead of waiting below it.
     let (cols, rows) = avatar_size();
-    if gfx::enabled() {
-        while lines.len() <= header_at + rows as usize {
-            prefix(&mut lines, vec![Line::default()]);
+    let avatar_end = header_at + rows as usize;
+    let lone = replies.is_empty() && !rail_after && role == Role::Normal;
+    let mark = if gfx::enabled() && lone && lines.len() < avatar_end {
+        Span::raw(" ")
+    } else {
+        if gfx::enabled() {
+            while lines.len() < avatar_end {
+                prefix(&mut lines, vec![Line::default()]);
+            }
         }
+        Span::styled(
+            if pending { "◌" } else { icons::get().node },
+            Style::default().fg(lane).add_modifier(Modifier::BOLD),
+        )
+    };
+    lines.push(Line::from([gutter(selected, mark), actions].concat()));
+    while gfx::enabled() && lines.len() < avatar_end {
+        lines.push(Line::from(gutter(selected, Span::raw(" "))));
     }
-    let dot = Span::styled(
-        if pending { "◌" } else { icons::get().node },
-        Style::default().fg(lane).add_modifier(Modifier::BOLD),
-    );
-    lines.push(Line::from([gutter(selected, dot), actions].concat()));
 
     // The author's avatar takes the node's place, over the header and the lines below it.
     let avatar: Option<Vec<Span<'static>>> = (0..rows).map(|row| avatar_row(&author, cols, rows, row)).collect();
@@ -1741,8 +1751,7 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
             Theme::dim(),
         ),
     ]));
-    if config::THEME_PICKER {
-        lines.push(Line::default());
+    {
         let shown = match (app.config.theme().as_str(), app.detected_light) {
             ("auto", Some(true)) => "auto · light, like your terminal".to_string(),
             ("auto", Some(false)) => "auto · dark, like your terminal".to_string(),
@@ -1756,14 +1765,11 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("  T goes back", Theme::faint_style()),
         ]));
         lines.extend(text::wrap_indented(
-        &format!(
-            "Auto follows your terminal's background. Your own themes go in {}, as TOML files like the ones in the repo's themes/ folder.",
-            text::tilde(&crate::theme::custom_dir())
-        ),
-        w,
-        Theme::faint_style(),
-        5,
-    ));
+            "Auto follows your terminal's background.",
+            w,
+            Theme::faint_style(),
+            5,
+        ));
     }
     lines.push(Line::default());
     lines.push(section("Server"));

@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_URL: &str = "https://dev-null.sh";
 
-/// Whether Settings offers themes. Off while the redesign settles: the app follows the terminal, dark or light, and
-/// a saved theme waits for its return. DEVNULL_THEME still picks any.
-pub const THEME_PICKER: bool = false;
+/// The themes Settings offers. Windows 98 and your own sit out while the redesign settles, and a saved one waits
+/// for their return; DEVNULL_THEME still picks any.
+pub const THEMES: [&str; 3] = ["auto", "dark", "light"];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -32,7 +32,7 @@ impl Config {
         std::env::var("DEVNULL_THEME")
             .ok()
             .filter(|t| !t.is_empty())
-            .or_else(|| self.theme.clone().filter(|_| THEME_PICKER))
+            .or_else(|| self.theme.clone().filter(|t| THEMES.contains(&t.as_str())))
             .unwrap_or_else(|| "auto".into())
             .to_lowercase()
     }

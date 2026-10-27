@@ -44,7 +44,7 @@ You can revoke the device on the web under Settings → Devices.
 
 - **Profiles** show a year of activity as a contribution graph in the developer's lane color (or bars for a newer account), their streak, Unix rank and badges. `A` lists every achievement with its progress. `⇥` moves through Commits, Replies, Followers and Following.
 - **Notifications** filter by kind, as on the web: replies, mentions, quotes, stars, follows and moderation.
-- **Settings** (`g s`) picks your color from the six lanes, Automatic or any hex color, toggles pastéis mode, syncs your profile from GitHub, and switches icons (`i`).
+- **Settings** (`g s`) picks your color from the six lanes, Automatic or any hex color, toggles pastéis mode, syncs your profile from GitHub, picks dark or light (`t`), and switches icons (`i`).
 - **The composer** suggests developers as you type `@`, and `⇥` completes. A draft you close is kept, even across restarts.
 - **Code blocks** are highlighted the way the web highlights them, when you're signed in.
 - **Safety:** `m` mutes and `B` blocks someone from their profile, and `!` reports a commit to the moderators.
@@ -68,13 +68,15 @@ devnull talks to the signed API of the [/dev/null server](https://github.com/dev
 
 The layout fits the terminal. With room to spare (176 columns by 44 rows or more), the log widens and avatars grow. As the terminal narrows, or its font grows, the sidebar folds to icons before the right column goes, so the log keeps at least 72 columns.
 
-devnull uses the web's dark and light palettes, and asks your terminal for its background color to pick one.
+devnull uses the web's dark and light palettes. It asks your terminal for its background color to pick one, and `t` in Settings goes through auto, dark and light.
+
+![devnull in light mode, in Ghostty](docs/light.png)
 
 **Icons.** In Ghostty, kitty and WezTerm, which ship the Nerd Font symbols, devnull uses the web's outline icons. Elsewhere it uses plain symbols, unless you have a Nerd Font: `i` in Settings goes through auto, Nerd Font and plain, and `DEVNULL_ICONS` sets it from the environment.
 
 **Big text.** In kitty 0.40 or later, names, headings and the wordmark are drawn larger, with kitty's [text sizing protocol](https://sw.kovidgoyal.net/kitty/text-sizing-protocol/). devnull asks the terminal whether it can, so everywhere else text stays one size. `DEVNULL_BIG_TEXT=off` turns it off.
 
-**Themes** are taking a break while the redesign settles, so Settings doesn't offer them. `DEVNULL_THEME` still picks one: `light`, `dark`, `windows-98`, or a TOML file of yours in `themes/` in the config dir, named after its id. [`themes/dark.toml`](themes/dark.toml) lists every color a theme can set, and a theme only needs the ones it changes:
+**Other themes** are taking a break while the redesign settles, so Settings only offers dark and light. `DEVNULL_THEME` still picks one: `light`, `dark`, `windows-98`, or a TOML file of yours in `themes/` in the config dir, named after its id. [`themes/dark.toml`](themes/dark.toml) lists every color a theme can set, and a theme only needs the ones it changes:
 
 ```toml
 # ~/.config/devnull/themes/solarized.toml
@@ -157,7 +159,7 @@ The mouse wheel scrolls. Click a commit to select it, and click it again to open
 | `DEVNULL_IMAGES` | `off` turns avatars and images off. `on` turns them on where they aren't detected. |
 | `DEVNULL_ICONS` | `nerd` or `plain`. Left unset, it's the setting from Settings, `auto` by default, which picks Nerd Font icons in Ghostty, kitty and WezTerm. |
 | `DEVNULL_BIG_TEXT` | `off` keeps text one size. `on` draws big text without asking the terminal first. |
-| `DEVNULL_THEME` | A theme's id, like `light`, `dark` or `windows-98`. Left unset, devnull follows the terminal's background. |
+| `DEVNULL_THEME` | A theme's id, like `light`, `dark` or `windows-98`. Left unset, it's the theme from Settings, `auto` by default, which follows the terminal's background. |
 
 Colors use the web's palettes. On terminals without truecolor, they're mapped to the 256-color palette.
 
