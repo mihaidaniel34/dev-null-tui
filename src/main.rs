@@ -11,6 +11,7 @@ mod cli_commit;
 mod config;
 mod gfx;
 mod model;
+mod remotes;
 mod system;
 mod text;
 mod theme;

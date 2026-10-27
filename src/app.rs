@@ -12,6 +12,7 @@ use crate::auth::{Authorization, DeviceKey};
 use crate::callback;
 use crate::config::{self, Config};
 use crate::model::*;
+use crate::remotes::{self, RemoteMsg};
 use crate::system;
 
 pub const MAX_BODY: usize = 4000;
@@ -27,6 +28,10 @@ pub enum Screen {
     Profile(String, Tab),
     Thread(String),
     Settings,
+    /// The inbox of Remotes, the direct messages.
+    Remotes,
+    /// A conversation in Remotes, by the partner's handle.
+    Remote(String),
 }
 
 impl Screen {
@@ -38,6 +43,8 @@ impl Screen {
             Screen::Profile(username, _) => format!("@{username}"),
             Screen::Thread(_) => "Commit".into(),
             Screen::Settings => "Settings".into(),
+            Screen::Remotes => "Remotes".into(),
+            Screen::Remote(handle) => format!("@{handle}"),
         }
     }
 }
@@ -217,6 +224,7 @@ pub enum Msg {
     },
     /// A picture is ready to send to the terminal, or couldn't be had.
     Picture(crate::gfx::Key, Option<Vec<u8>>),
+    Remote(RemoteMsg),
 }
 
 pub struct ApiFailure {
@@ -347,6 +355,7 @@ pub struct App {
     pub sign_in: Option<SignIn>,
     /// Where the feed was drawn, for mouse clicks.
     pub feed_area: ratatui::layout::Rect,
+    pub remotes: remotes::Remotes,
 }
 
 impl App {
@@ -378,6 +387,7 @@ impl App {
             cli_job: None,
             sign_in: None,
             feed_area: Default::default(),
+            remotes: Default::default(),
         };
 
         if app.signed() {
@@ -434,7 +444,7 @@ impl App {
         self.toast = Some((message.into(), true, Instant::now()));
     }
 
-    fn load_me(&self) {
+    pub fn load_me(&self) {
         let api = self.api.clone();
         self.spawn(async move {
             Msg::Me(api.me().await.map_err(|e| ApiFailure {
@@ -447,6 +457,11 @@ impl App {
     // Navigation ------------------------------------------------------------------------------------------------
 
     pub fn navigate(&mut self, screen: Screen) {
+        let remote = matches!(screen, Screen::Remotes | Screen::Remote(_));
+        if remote && !self.signed() {
+            self.error("Sign in to use Remotes: g s");
+            return;
+        }
         if let Screen::Log(log) = screen {
             self.log = log;
             // Log tabs replace each other rather than stacking up.
@@ -461,6 +476,11 @@ impl App {
             self.stack.remove(0);
         }
 
+        if remote {
+            self.remotes_opened(&screen);
+            return;
+        }
+
         let feed = self.feeds.entry(screen.clone()).or_default();
         if !feed.loaded && !feed.loading {
             self.load(screen, false);
@@ -468,8 +488,10 @@ impl App {
     }
 
     pub fn back(&mut self) {
-        if self.stack.len() > 1 {
-            self.stack.pop();
+        if self.stack.len() > 1
+            && let Some(left) = self.stack.pop()
+        {
+            self.remotes_left(&left);
         }
     }
 
@@ -477,6 +499,9 @@ impl App {
         let screen = self.screen().clone();
         if screen == Screen::Settings {
             return;
+        }
+        if matches!(screen, Screen::Remotes | Screen::Remote(_)) {
+            return self.remotes_refresh();
         }
         if let Some(feed) = self.feeds.get_mut(&screen) {
             feed.new_count = 0;
@@ -545,6 +570,7 @@ impl App {
                     self.config.username = Some(me.user.username.clone());
                     let _ = self.config.save();
                 }
+                self.remotes.unread = me.remotes.as_ref().map_or(0, |r| r.unread_count);
                 self.me = Some(me);
             }
             Msg::Me(Err(failure)) => {
@@ -602,6 +628,7 @@ impl App {
             Msg::SignedIn(result) => self.on_signed_in(result),
             Msg::Toast(message, error) => self.toast = Some((message, error, Instant::now())),
             Msg::Picture(key, png) => crate::gfx::loaded(key, png),
+            Msg::Remote(msg) => self.on_remote_msg(msg),
             Msg::MeUpdated(result, done) => {
                 self.busy = None;
                 match result {
@@ -737,6 +764,8 @@ impl App {
             self.toast = None;
         }
 
+        self.remotes_tick();
+
         // Count what's new on the log, as the web does, about once a minute.
         if let Screen::Log(log) = self.screen().clone() {
             if !self.signed() || log == Log::Trending {
@@ -775,6 +804,9 @@ impl App {
     }
 
     fn move_by(&mut self, delta: isize) {
+        if self.remotes_scroll(delta) {
+            return;
+        }
         if let Some(feed) = self.feed_mut() {
             if feed.items.is_empty() {
                 return;
@@ -1332,6 +1364,9 @@ impl App {
 
     pub fn on_paste(&mut self, text: String) {
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        if self.input.is_none() && self.composer.is_none() && self.remotes_paste(&text) {
+            return;
+        }
         if let Some(input) = self.input.as_mut() {
             for c in text.chars().filter(|c| *c != '\n') {
                 input.text.insert(input.cursor, c);
@@ -1472,6 +1507,7 @@ impl App {
                 KeyCode::Char('s') => self.navigate(Screen::Settings),
                 KeyCode::Char('n') => self.navigate(Screen::Notifications(Filter::All)),
                 KeyCode::Char('b') => self.navigate(Screen::Starred),
+                KeyCode::Char('r') => self.navigate(Screen::Remotes),
                 KeyCode::Char('g') => {
                     if let Some(feed) = self.feed_mut() {
                         feed.selected = 0;
@@ -1479,6 +1515,10 @@ impl App {
                 }
                 _ => {}
             }
+            return;
+        }
+
+        if self.remotes_key(key) {
             return;
         }
 
@@ -2228,7 +2268,7 @@ async fn fetch(api: Api, screen: Screen, cursor: Option<String>, signed: bool, g
                 notice,
             })
         }
-        Screen::Settings => Err(String::new()),
+        Screen::Settings | Screen::Remotes | Screen::Remote(_) => Err(String::new()),
     }
 }
 

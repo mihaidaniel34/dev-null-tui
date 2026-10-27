@@ -1,0 +1,25 @@
+# The /dev/null server commit docs/api-contract.md was checked against, then the server files that matter to devnull.
+# scripts/check-api.sh compares them with the server's main. Run it with --update once the TUI is fixed.
+commit 3096b3c39269895bc4f23246d7dcadb187e6f97d
+file routes/api.php
+file app/Http/Resources/ConversationResource.php
+file app/Http/Resources/ConversationThreadResource.php
+file app/Http/Resources/MessageResource.php
+file app/Http/Resources/RemoteCandidateResource.php
+file app/Http/Resources/UserResource.php
+file app/Http/Resources/CurrentUserResource.php
+file app/Http/Resources/CommitResource.php
+file app/Http/Resources/NotificationResource.php
+file app/Http/Requests/ListApiConversationsRequest.php
+file app/Http/Requests/ListApiConversationMessagesRequest.php
+file app/Http/Requests/CreateApiConversationMessageRequest.php
+file app/Http/Requests/CreateConversationMessageRequest.php
+file app/Http/Requests/UpdateApiConversationReadRequest.php
+file app/Http/Requests/CreateApiMessageReactionRequest.php
+file app/Http/Requests/ListApiRemoteCandidatesRequest.php
+file app/Http/Requests/UpdateApiUserRemotePreferencesRequest.php
+file app/Queries/ConversationsQuery.php
+file app/Queries/ConversationThreadQuery.php
+file app/Enums/InboxTab.php
+file app/Enums/PushAccess.php
+file app/Services/SignedRequests.php
