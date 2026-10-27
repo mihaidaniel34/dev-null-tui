@@ -6,10 +6,12 @@ mod api;
 mod app;
 mod attach;
 mod auth;
+mod big;
 mod callback;
 mod cli_commit;
 mod config;
 mod gfx;
+mod icons;
 mod model;
 mod remotes;
 mod system;
@@ -97,6 +99,7 @@ async fn run_cli() -> Result<()> {
     let mut terminal = setup()?;
     // Asked even when the theme is set, so switching to auto later knows the answer.
     let detected = theme::detect_light();
+    big::detect();
     let result = run(&mut terminal, api, config, detected).await;
     restore(&mut terminal)?;
     result
@@ -211,6 +214,7 @@ async fn run(terminal: &mut Term, api: Api, config: Config, detected: Option<boo
     let mut app = App::new(api, config, tx);
     app.detected_light = detected;
     app.apply_theme();
+    icons::set(&app.config.icons());
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(120));
 

@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
@@ -8,8 +10,10 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use crate::activity;
 use crate::api::Log;
 use crate::app::*;
+use crate::big::{self, Size};
 use crate::config;
 use crate::gfx;
+use crate::icons;
 use crate::model::*;
 use crate::text::{self, body_lines, count, day_label, relative_time, truncate, width, wrap_plain};
 use crate::theme::{self, Theme, rgb};
@@ -19,7 +23,26 @@ mod remotes_view;
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const LIST_BODY_LINES: usize = 10;
 
+/// Whether the terminal has room to spare: wider columns, bigger avatars, more air between commits.
+static ROOMY: AtomicBool = AtomicBool::new(false);
+
+fn roomy() -> bool {
+    ROOMY.load(Ordering::Relaxed)
+}
+
+/// The feed's avatars, in cells: columns, then rows. An odd number of columns, so the rail runs from the middle one,
+/// with the round picture centered across them.
+fn avatar_size() -> (u16, u16) {
+    if roomy() { (7, 3) } else { (5, 2) }
+}
+
 pub fn draw(f: &mut Frame, app: &mut App) {
+    big::reset();
+    draw_frame(f, app);
+    big::finish(f.buffer_mut());
+}
+
+fn draw_frame(f: &mut Frame, app: &mut App) {
     let area = f.area();
     f.buffer_mut().set_style(area, Style::default().bg(Theme::shell()).fg(Theme::ink()));
     if area.width < 30 || area.height < 10 {
@@ -37,16 +60,21 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         ..area
     };
 
+    // The feed comes first: as the terminal narrows (or its font grows), the sidebar folds to icons before the right
+    // column goes, and the feed keeps at least 72 columns.
     let w = area.width;
-    let sidebar_w: u16 = if w >= 100 { 25 } else { 5 };
-    let right_w: u16 = if w >= 134 {
-        40
-    } else if w >= 124 {
-        36
+    let roomy = w >= 176 && area.height >= 44;
+    ROOMY.store(roomy, Ordering::Relaxed);
+    let (sidebar_w, right_w, center_max): (u16, u16, u16) = if roomy {
+        (30, 46, 116)
+    } else if w >= 140 {
+        (25, 40, 100)
+    } else if w >= 116 {
+        (5, 36, 100)
     } else {
-        0
+        (5, 0, 100)
     };
-    let center_w = (w - sidebar_w - right_w - 2).min(92);
+    let center_w = (w - sidebar_w - right_w - 2).min(center_max);
     let total = sidebar_w + 1 + center_w + 1 + right_w;
     let left = area.x + (w - total) / 2;
 
@@ -114,36 +142,72 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     let wide = area.width >= 12;
     let buf = f.buffer_mut();
 
-    let logo = vec![
-        Span::styled("/", Style::default().fg(Theme::ink()).add_modifier(Modifier::BOLD)),
-        Span::styled("/", Style::default().fg(Theme::lane(0)).add_modifier(Modifier::BOLD)),
-    ];
-    let mut logo_line = logo;
-    if wide {
-        logo_line.push(Span::styled("  /dev/null", Theme::bold()));
+    // The wordmark, large where the terminal can, and the web's tagline under it.
+    let ink = Style::default().fg(Theme::ink()).add_modifier(Modifier::BOLD);
+    let lane = Style::default().fg(Theme::lane(0)).add_modifier(Modifier::BOLD);
+    let x = area.x + if wide { 3 } else { 1 };
+    let wordmark = wide
+        .then(|| {
+            (
+                big::rows("/", Size::Double, ink),
+                big::rows("/", Size::Double, lane),
+                big::rows("/dev/null", Size::Large, ink),
+            )
+        })
+        .and_then(|parts| match parts {
+            (Some(a), Some(b), Some(c)) => Some([a, b, c]),
+            _ => None,
+        });
+    // Only whole: cut short, it reads as a typo.
+    const TAGLINE: &str = "a social network for devs";
+    let fits = wide && x + width(TAGLINE) as u16 <= area.x + area.width;
+    let mut nav_y = area.y + 4;
+    if let Some([a, b, c]) = wordmark {
+        let top = Line::from(vec![a.0, b.0, Span::raw(" "), c.0]);
+        let bottom = Line::from(vec![a.1, b.1, Span::raw(" "), c.1]);
+        buf.set_line(x, area.y + 1, &top, area.width - 3);
+        buf.set_line(x, area.y + 2, &bottom, area.width - 3);
+        if fits {
+            buf.set_string(x, area.y + 3, TAGLINE, Theme::faint_style());
+        }
+        nav_y = area.y + 5;
+    } else {
+        let mut logo = vec![Span::styled("/", ink), Span::styled("/", lane)];
+        if wide {
+            logo.push(Span::styled("  /dev/null", Theme::bold()));
+        }
+        buf.set_line(x, area.y + 1, &Line::from(logo), area.width);
+        if fits {
+            buf.set_string(x, area.y + 2, TAGLINE, Theme::faint_style());
+        }
     }
-    buf.set_line(area.x + if wide { 3 } else { 1 }, area.y + 1, &Line::from(logo_line), area.width);
 
     let screen = app.screen();
     let remotes = match app.remotes.unread {
         0 => "Remotes".to_string(),
         n => format!("Remotes ({n})"),
     };
+    let icon = icons::get();
     let items: [(&str, &str, bool, &str); 6] = [
-        ("◉", "Log", matches!(screen, Screen::Log(_)), "g l"),
-        ("◔", "Notifications", matches!(screen, Screen::Notifications(_)), "g n"),
-        ("✉", &remotes, matches!(screen, Screen::Remotes | Screen::Remote(_)), "g r"),
+        (icon.log, "Log", matches!(screen, Screen::Log(_)), "g l"),
         (
-            "◯",
+            icon.notifications,
+            "Notifications",
+            matches!(screen, Screen::Notifications(_)),
+            "g n",
+        ),
+        (icon.remotes, &remotes, matches!(screen, Screen::Remotes | Screen::Remote(_)), "g r"),
+        (
+            icon.profile,
             "Profile",
             matches!(screen, Screen::Profile(u, _) if Some(u.clone()) == app.username()),
             "g p",
         ),
-        ("☆", "Starred", *screen == Screen::Starred, "g b"),
-        ("≡", "Settings", *screen == Screen::Settings, "g s"),
+        (icon.starred, "Starred", *screen == Screen::Starred, "g b"),
+        (icon.settings, "Settings", *screen == Screen::Settings, "g s"),
     ];
 
-    let mut y = area.y + 4;
+    let mut y = nav_y;
     for (icon, label, active, keys) in items {
         if y + 1 >= area.y + area.height {
             break;
@@ -160,7 +224,7 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
             Theme::dim()
         };
         buf.set_style(row, style);
-        let mut spans = vec![Span::styled(format!(" {icon} "), style)];
+        let mut spans = vec![Span::styled(format!(" {icon}{}", icons::gap()), style)];
         if wide {
             spans.push(Span::styled(
                 format!(" {label}"),
@@ -194,7 +258,11 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
             .bg(Theme::primary())
             .add_modifier(Modifier::BOLD);
         buf.set_style(row, style);
-        let label = if wide { " ⊕  Commit" } else { " ⊕ " };
+        let label = if wide {
+            format!(" {}{} Commit", icon.commit, icons::gap())
+        } else {
+            format!(" {}{}", icon.commit, icons::gap())
+        };
         buf.set_line(row.x, y, &Line::from(Span::styled(label, style)), row.width);
         if wide {
             buf.set_string(row.x + row.width - 2, y, "c", style);
@@ -217,10 +285,10 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
             ),
         ]),
         (None, Some(username)) if wide => Line::from(vec![
-            Span::styled(" ○ ", Theme::dim()),
+            Span::styled(" ○\u{a0}", Theme::dim()),
             Span::styled(truncate(&format!("@{username}"), area.width as usize - 5), Theme::faint_style()),
         ]),
-        _ => Line::from(Span::styled(if wide { " ○ guest" } else { " ○" }, Theme::faint_style())),
+        _ => Line::from(Span::styled(if wide { " ○\u{a0}guest" } else { " ○" }, Theme::faint_style())),
     };
     buf.set_line(area.x + 1, bottom, &line, area.width.saturating_sub(1));
 }
@@ -312,7 +380,7 @@ fn draw_center(f: &mut Frame, app: &mut App, area: Rect) {
         let row = Rect { y, height: 1, ..area };
         let style = Style::default().fg(Theme::on_primary_soft()).bg(Theme::primary_soft());
         f.buffer_mut().set_style(row, style);
-        let label = format!("↑ {} new commit{} · R", new_count, if new_count == 1 { "" } else { "s" });
+        let label = format!("↑\u{a0}{} new commit{} · R", new_count, if new_count == 1 { "" } else { "s" });
         let x = area.x + (area.width.saturating_sub(width(&label) as u16)) / 2;
         f.buffer_mut().set_string(x, y, label, style.add_modifier(Modifier::BOLD));
         y += 1;
@@ -353,17 +421,28 @@ fn draw_tabs(buf: &mut Buffer, area: Rect, tabs: &[(&str, bool)]) {
 
 fn draw_header(buf: &mut Buffer, app: &App, area: Rect, title: &str) -> u16 {
     let back = app.stack.len() > 1;
-    let line = Line::from(vec![
-        Span::styled(if back { " ← " } else { "   " }, Theme::dim()),
-        Span::styled(title.to_string(), Theme::bold()),
-    ]);
-    buf.set_line(area.x, area.y + 1, &line, area.width);
+    let arrow = Span::styled(if back { " ←\u{a0}" } else { "   " }, Theme::dim());
+    // Twice the size where the terminal can, the arrow and esc on the title's baseline.
+    let room = (area.width as usize).saturating_sub(8);
+    let rows = big::rows(title, Size::Double, Theme::bold()).filter(|(_, _, w)| *w <= room);
+    let tall = rows.is_some();
+    match rows {
+        Some((top, bottom, _)) => {
+            buf.set_line(area.x, area.y + 1, &Line::from(vec![Span::raw("   "), top]), area.width);
+            buf.set_line(area.x, area.y + 2, &Line::from(vec![arrow, bottom]), area.width);
+        }
+        None => {
+            let line = Line::from(vec![arrow, Span::styled(title.to_string(), Theme::bold())]);
+            buf.set_line(area.x, area.y + 1, &line, area.width);
+        }
+    }
+    let baseline = area.y + 1 + u16::from(tall);
     if back {
         let hint = "esc";
-        buf.set_string(area.x + area.width - hint.len() as u16 - 1, area.y + 1, hint, Theme::faint_style());
+        buf.set_string(area.x + area.width - hint.len() as u16 - 1, baseline, hint, Theme::faint_style());
     }
-    hairline(buf, area.x, area.y + 2, area.width);
-    area.y + 3
+    hairline(buf, area.x, baseline + 1, area.width);
+    baseline + 2
 }
 
 /// The "What did you ship?" box at the top of the log.
@@ -374,7 +453,7 @@ fn draw_composer_bar(buf: &mut Buffer, app: &App, area: Rect) -> u16 {
             buf.set_line(area.x + 2, area.y + 1, &Line::from(avatar), 2);
         }
         None => {
-            buf.set_string(area.x + 2, area.y + 1, "◯", Style::default().fg(lane));
+            buf.set_string(area.x + 2, area.y + 1, "⦿", Style::default().fg(lane));
         }
     }
     let draft = app.draft.as_ref().map(|d| d.iter().collect::<String>());
@@ -395,11 +474,16 @@ fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile)
     let inner = area.width.saturating_sub(4) as usize;
     let mut lines: Vec<Line> = Vec::new();
 
-    let mut name = vec![
-        Span::styled("● ", Style::default().fg(Theme::user_lane(user))),
-        Span::styled(user.display_name().to_string(), Theme::bold()),
-        Span::styled(format!("  @{}", user.username), Theme::dim()),
-    ];
+    // The name twice the size where the terminal can, its handle and badges on the second row.
+    let dot = Span::styled("●\u{a0}", Style::default().fg(Theme::user_lane(user)));
+    let mut name = match big::rows(user.display_name(), Size::Double, Theme::bold()).filter(|(_, _, w)| *w + 2 <= inner) {
+        Some((top, bottom, _)) => {
+            lines.push(Line::from(vec![dot, top]));
+            vec![Span::raw("  "), bottom]
+        }
+        None => vec![dot, Span::styled(user.display_name().to_string(), Theme::bold())],
+    };
+    name.push(Span::styled(format!("  @{}", user.username), Theme::dim()));
     if profile.is_muting == Some(true) {
         name.push(Span::styled("  muted", Style::default().fg(Theme::lane(5)).bg(Theme::wash())));
     }
@@ -474,7 +558,11 @@ fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile)
     if let (Some(top), Some(bottom)) = (avatar_row(user, 4, 2, 0), avatar_row(user, 4, 2, 1))
         && lines.len() >= 2
     {
+        // The avatar stands in for the dot, and the space under it.
         lines[0].spans.remove(0);
+        if lines[1].spans.first().is_some_and(|s| s.content == "  ") {
+            lines[1].spans.remove(0);
+        }
         for (i, line) in lines.iter_mut().enumerate() {
             let lead = match i {
                 0 => top.clone(),
@@ -667,7 +755,7 @@ fn draw_feed(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// What a title bar has on the right, as Windows 98 has them: minimize, maximize and close.
-const BUTTONS: &str = " _□ × ";
+const BUTTONS: &str = " _□\u{a0}× ";
 
 /// Whether a commit's header is drawn as a title bar.
 fn window(selected: bool) -> bool {
@@ -706,7 +794,7 @@ fn empty_message(screen: &Screen) -> &'static str {
         Screen::Log(Log::Following) => "Nothing here yet. Follow a few developers and their commits show up here.",
         Screen::Log(_) => "Nothing committed yet. Be the first: c",
         Screen::Notifications(Filter::All) => "No notifications. It's quiet in here.",
-        Screen::Notifications(_) => "Nothing of that kind. ⇥ for the next filter.",
+        Screen::Notifications(_) => "Nothing of that kind. ⇥\u{a0}for the next filter.",
         Screen::Starred => "Nothing starred yet. Press s on a commit to keep it here.",
         Screen::Profile(_, Tab::Replies) => "No replies yet.",
         Screen::Profile(_, Tab::Commits) => "No commits yet. Everything else went to /dev/null.",
@@ -725,20 +813,23 @@ fn bar(selected: bool) -> Span<'static> {
 }
 
 /// The gutter: a selection bar, the commit's node or the rail running through it, and a gap. Always five spans,
-/// two cells wider when there are avatars to make room for.
+/// wider when there are avatars to make room for, with the node under the avatar's middle. The gap opens with a
+/// no-break space, as terminals let a symbol followed by a plain one spill into its cell, off the rail.
 fn gutter(selected: bool, mark: Span<'static>) -> Vec<Span<'static>> {
-    let wide = gfx::enabled();
-    vec![
-        bar(selected),
-        Span::raw(" "),
-        Span::raw(if wide { " " } else { "" }),
-        mark,
-        Span::raw(if wide { "   " } else { "  " }),
-    ]
+    let (before, after) = match (gfx::enabled(), roomy()) {
+        (false, _) => ("", "\u{a0} "),
+        (true, false) => ("  ", "\u{a0}  "),
+        (true, true) => ("   ", "\u{a0}   "),
+    };
+    vec![bar(selected), Span::raw(" "), Span::raw(before), mark, Span::raw(after)]
 }
 
 fn gutter_width() -> usize {
-    if gfx::enabled() { 7 } else { 5 }
+    match (gfx::enabled(), roomy()) {
+        (false, _) => 5,
+        (true, false) => 8,
+        (true, true) => 10,
+    }
 }
 
 /// Puts one row of an avatar where a line's gutter has its node or rail.
@@ -764,7 +855,7 @@ fn avatar_row(user: &User, cols: u16, rows: u16, row: u16) -> Option<Span<'stati
 fn small_avatar(user: &User) -> Span<'static> {
     match avatar_row(user, 2, 1, 0) {
         Some(avatar) => Span::styled(format!("{} ", avatar.content), avatar.style),
-        None => Span::styled("● ", Style::default().fg(Theme::user_lane(user))),
+        None => Span::styled("●\u{a0}", Style::default().fg(Theme::user_lane(user))),
     }
 }
 
@@ -775,7 +866,7 @@ fn picture_lines(images: &[Image], content: usize, max_rows: u16) -> Option<Vec<
     }
     let shown: Vec<&Image> = images.iter().filter(|i| i.url.is_some()).take(3).collect();
     let n = shown.len();
-    let each = (content.saturating_sub(n - 1) / n).min(48) as u16;
+    let each = (content.saturating_sub(n - 1) / n).min(if roomy() { 72 } else { 48 }) as u16;
     let keys: Vec<gfx::Key> = shown
         .iter()
         .map(|image| {
@@ -848,20 +939,17 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
     } else {
         commit.reply_preview.clone().map(|p| p.data).unwrap_or_default()
     };
-    let has_rail = !replies.is_empty() || rail_after || (role == Role::Focus && commit.replies_count.unwrap_or(0) > 0);
-    let rail = || {
-        if has_rail {
-            Span::styled("│", Style::default().fg(lane))
-        } else {
-            Span::raw(" ")
-        }
-    };
+    // The rail runs from the avatar down to the commit's node on its actions, as on the web.
+    let rail = || Span::styled("│", Style::default().fg(lane));
 
+    if roomy() {
+        lines.push(Line::from(gutter(selected, Span::raw(" "))));
+    }
     if commit.is_pinned == Some(true) && role == Role::Normal {
         lines.push(Line::from(
             [
                 gutter(selected, Span::raw(" ")),
-                vec![Span::styled("◇ Pinned", Theme::faint_style())],
+                vec![Span::styled("◇\u{a0}Pinned", Theme::faint_style())],
             ]
             .concat(),
         ));
@@ -872,7 +960,7 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
     let node = if pending {
         Span::styled("◌", Style::default().fg(lane))
     } else {
-        Span::styled("●", Style::default().fg(lane).add_modifier(Modifier::BOLD))
+        Span::styled(icons::get().node, Style::default().fg(lane).add_modifier(Modifier::BOLD))
     };
     let hash = commit.hash();
     let time = relative_time(commit.created_at);
@@ -889,20 +977,28 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
         content
     };
     let fixed = width(&author.username) + 2 + 3 + width(&time) + hash.len() + 2 + status.iter().map(|s| s.width()).sum::<usize>();
-    let name = truncate(author.display_name(), content.saturating_sub(fixed).max(6));
-    let mut header = vec![
-        Span::styled(name, Theme::bold()),
-        Span::styled(format!(" @{}", author.username), Theme::dim()),
-        Span::styled(format!(" · {time}"), Theme::dim()),
-    ];
+    let room = content.saturating_sub(fixed).max(6);
+    // A large name takes two rows, and the rest of the header sits on the second, along its baseline.
+    let large = big::rows(&truncate(author.display_name(), room * 2 / 3), Size::Large, Theme::bold());
+    let mut header = Vec::new();
+    match &large {
+        Some((top, bottom, _)) => {
+            lines.push(Line::from([gutter(selected, node.clone()), vec![top.clone()]].concat()));
+            header.push(bottom.clone());
+        }
+        None => header.push(Span::styled(truncate(author.display_name(), room), Theme::bold())),
+    }
+    header.push(Span::styled(format!(" @{}", author.username), Theme::dim()));
+    header.push(Span::styled(format!(" · {time}"), Theme::dim()));
     header.extend(status);
     let used: usize = header.iter().map(|s| s.width()).sum();
     if used + hash.len() + 1 < content {
         header.push(Span::raw(" ".repeat(content - used - hash.len())));
         header.push(Span::styled(hash, Theme::faint_style()));
     }
-    lines.push(Line::from([gutter(selected, node), header].concat()));
-    let header_at = lines.len() - 1;
+    let mark = if large.is_some() { rail() } else { node };
+    lines.push(Line::from([gutter(selected, mark), header].concat()));
+    let header_at = lines.len() - 1 - usize::from(large.is_some());
     let content = w.saturating_sub(gutter_width() + 2).max(10);
 
     let prefix = |lines: &mut Vec<Line<'static>>, body: Vec<Line<'static>>| {
@@ -929,10 +1025,15 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
 
     // Images, link card, quote, poll.
     let mut extras: Vec<Line<'static>> = Vec::new();
-    let pictures = commit
-        .images
-        .as_deref()
-        .and_then(|images| picture_lines(images, content, if role == Role::Focus { 20 } else { 12 }));
+    let pictures = commit.images.as_deref().and_then(|images| {
+        let rows = match (role == Role::Focus, roomy()) {
+            (true, true) => 26,
+            (true, false) => 20,
+            (false, true) => 16,
+            (false, false) => 12,
+        };
+        picture_lines(images, content, rows)
+    });
     if let Some(pictures) = pictures {
         extras.extend(pictures);
     } else if let Some(images) = commit.images.as_ref().filter(|i| !i.is_empty()) {
@@ -944,7 +1045,7 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
             })
             .collect();
         extras.push(Line::from(vec![
-            Span::styled("⊞ ", Style::default().fg(lane)),
+            Span::styled("⊞\u{a0}", Style::default().fg(lane)),
             Span::styled(
                 format!(
                     "{} image{} · {}",
@@ -983,25 +1084,34 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
     let starred = commit.starred.unwrap_or(false);
     let mut actions = vec![
         Span::styled(
-            if starred { "★" } else { "☆" },
+            if starred { icons::get().star_full } else { icons::get().star },
             Style::default().fg(if starred { Theme::star() } else { Theme::muted() }),
         ),
-        Span::styled(format!(" {:<5}", commit.stars_count.map(count).unwrap_or_default()), Theme::dim()),
+        Span::styled(
+            format!("{}{:<5}", icons::gap(), commit.stars_count.map(count).unwrap_or_default()),
+            Theme::dim(),
+        ),
     ];
     if pasteis {
-        actions.push(Span::styled("◍", Style::default().fg(Theme::lane(5))));
+        actions.push(Span::styled("⊚", Style::default().fg(Theme::lane(5))));
         actions.push(Span::styled(
-            format!(" {:<5}", commit.pasteis_count.map(count).unwrap_or_else(|| "0".into())),
+            format!("\u{a0}{:<5}", commit.pasteis_count.map(count).unwrap_or_else(|| "0".into())),
             Theme::dim(),
         ));
     }
-    actions.push(Span::styled("❝ Quote   ", Theme::dim()));
+    let (icon, gap) = (icons::get(), icons::gap());
+    actions.push(Span::styled(format!("{}{gap}Quote   ", icon.quote), Theme::dim()));
     let replies_count = commit.replies_count.unwrap_or(0);
     actions.push(Span::styled(
         if replies_count > 0 {
-            format!("↩ {} repl{}", count(replies_count), if replies_count == 1 { "y" } else { "ies" })
+            format!(
+                "{}{gap}{} repl{}",
+                icon.reply,
+                count(replies_count),
+                if replies_count == 1 { "y" } else { "ies" }
+            )
         } else {
-            "↩ Reply".into()
+            format!("{}{gap}Reply", icon.reply)
         },
         Theme::dim(),
     ));
@@ -1015,47 +1125,110 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
             vec![Line::default(), Line::from(Span::styled(full, Theme::faint_style()))],
         );
     }
-    prefix(&mut lines, vec![Line::from(actions)]);
+    // The node goes on the actions, a stretch of rail below the avatar however short the commit.
+    let (cols, rows) = avatar_size();
+    if gfx::enabled() {
+        while lines.len() <= header_at + rows as usize {
+            prefix(&mut lines, vec![Line::default()]);
+        }
+    }
+    let dot = Span::styled(
+        if pending { "◌" } else { icons::get().node },
+        Style::default().fg(lane).add_modifier(Modifier::BOLD),
+    );
+    lines.push(Line::from([gutter(selected, dot), actions].concat()));
 
-    // The author's avatar takes the node's place, over the header and the line below it.
-    if let (Some(top), Some(bottom)) = (avatar_row(&author, 4, 2, 0), avatar_row(&author, 4, 2, 1)) {
-        lines[header_at] = with_avatar(std::mem::take(&mut lines[header_at]), selected, top);
-        lines[header_at + 1] = with_avatar(std::mem::take(&mut lines[header_at + 1]), selected, bottom);
+    // The author's avatar takes the node's place, over the header and the lines below it.
+    let avatar: Option<Vec<Span<'static>>> = (0..rows).map(|row| avatar_row(&author, cols, rows, row)).collect();
+    for (row, span) in avatar.into_iter().flatten().enumerate() {
+        let at = header_at + row;
+        lines[at] = with_avatar(std::mem::take(&mut lines[at]), selected, span);
     }
 
-    // Replies under it, branching off the rail.
+    // Replies under it, as the web shows them: a dotted branch off the node into each one's avatar, then its text and
+    // actions beside it. One that quotes the commit says so.
     if !replies.is_empty() {
         let total = replies.len();
+        let dotted = Style::default().fg(lane);
         for (i, reply) in replies.iter().enumerate() {
             let last = i + 1 == total;
             let reply_author = reply.author.clone().unwrap_or_default();
-            let inner = content.saturating_sub(4);
-            let mut reply_lines = vec![Line::from(vec![
-                small_avatar(&reply_author),
+            let avatar: Option<Vec<Span<'static>>> = (0..2).map(|row| avatar_row(&reply_author, 4, 2, row)).collect();
+            let lead_w = if avatar.is_some() { 5 } else { 2 };
+            let inner = content.saturating_sub(lead_w);
+
+            let mut head = vec![
                 Span::styled(truncate(reply_author.display_name(), inner / 2), Theme::bold()),
-                Span::styled(
-                    format!(" @{} · {}", reply_author.username, relative_time(reply.created_at)),
-                    Theme::dim(),
-                ),
-            ])];
-            let mut body = body_lines(reply.body.as_deref().unwrap_or(""), inner.saturating_sub(2), Theme::text());
+                Span::styled(format!(" @{}", reply_author.username), Theme::dim()),
+            ];
+            // Quotes come in the preview too: anything that isn't a reply to this commit quoted it.
+            if reply.parent_id.as_deref() != Some(commit.id.as_str()) {
+                head.push(Span::styled(" quoted", Theme::link()));
+            }
+            head.push(Span::styled(format!(" · {}", relative_time(reply.created_at)), Theme::dim()));
+            let mut rows = vec![Line::from(head)];
+            let mut body = body_lines(reply.body.as_deref().unwrap_or(""), inner, Theme::text());
             if body.len() > 4 {
                 body.truncate(3);
                 body.push(Line::from(Span::styled("…", Theme::dim())));
             }
-            reply_lines.extend(body.into_iter().map(|l| Line::from([vec![Span::raw("  ")], l.spans].concat())));
+            rows.extend(body);
+            if avatar.is_some() && rows.len() < 2 {
+                rows.push(Line::default());
+            }
+            let starred = reply.starred.unwrap_or(false);
+            let mut actions = vec![
+                Span::styled(
+                    if starred { icons::get().star_full } else { icons::get().star },
+                    Style::default().fg(if starred { Theme::star() } else { Theme::muted() }),
+                ),
+                Span::styled(
+                    format!("{}{:<5}", icons::gap(), reply.stars_count.map(count).unwrap_or_default()),
+                    Theme::dim(),
+                ),
+            ];
+            if pasteis {
+                actions.push(Span::styled("⊚", Style::default().fg(Theme::lane(5))));
+                actions.push(Span::styled(
+                    format!("\u{a0}{:<5}", reply.pasteis_count.map(count).unwrap_or_else(|| "0".into())),
+                    Theme::dim(),
+                ));
+            }
+            actions.push(Span::styled(
+                format!("{}{}Reply   ", icons::get().reply, icons::gap()),
+                Theme::dim(),
+            ));
+            if let Some(n) = reply.replies_count.filter(|n| *n > 0) {
+                actions.push(Span::styled(
+                    format!("›\u{a0}{} repl{}", count(n), if n == 1 { "y" } else { "ies" }),
+                    Theme::link(),
+                ));
+            }
+            rows.push(Line::from(actions));
 
-            for (j, line) in reply_lines.into_iter().enumerate() {
-                let branch = match (j, last) {
-                    (0, false) => "├─ ",
-                    (0, true) => "╰─ ",
-                    (_, false) => "│  ",
-                    (_, true) => "   ",
-                };
+            for (j, row) in rows.into_iter().enumerate() {
                 let mut spans = gutter(selected, Span::raw(" "));
-                spans[3] = Span::styled(branch.chars().next().unwrap().to_string(), Style::default().fg(lane));
-                spans[4] = Span::styled(branch.chars().skip(1).collect::<String>() + " ", Style::default().fg(lane));
-                spans.extend(line.spans);
+                let gap = spans[4].width();
+                let (mark, rest) = match (j, last) {
+                    (0, false) => ("├", format!("{} ", "┄".repeat(gap - 1))),
+                    (0, true) => ("╰", format!("{} ", "┄".repeat(gap - 1))),
+                    (_, false) => ("┊", " ".repeat(gap)),
+                    (_, true) => (" ", " ".repeat(gap)),
+                };
+                spans[3] = Span::styled(mark, dotted);
+                spans[4] = Span::styled(rest, dotted);
+                match (&avatar, j) {
+                    (Some(avatar), 0 | 1) => spans.extend([avatar[j].clone(), Span::raw(" ")]),
+                    (Some(_), _) => spans.push(Span::raw("     ")),
+                    (None, 0) => spans.push(small_avatar(&reply_author)),
+                    (None, _) => spans.push(Span::raw("  ")),
+                }
+                spans.extend(row.spans);
+                lines.push(Line::from(spans));
+            }
+            if !last {
+                let mut spans = gutter(selected, Span::styled("┊", dotted));
+                spans[4] = Span::raw(" ".repeat(spans[4].width()));
                 lines.push(Line::from(spans));
             }
         }
@@ -1085,7 +1258,7 @@ fn render_commit(feed: &Feed, commit: &Commit, role: Role, w: usize, selected: b
             let who = author.username.clone();
             lines.push(Line::from(vec![
                 Span::raw("    "),
-                Span::styled("↩ ", Theme::link()),
+                Span::styled("↩\u{a0}", Theme::link()),
                 Span::styled(format!("Reply to @{who}…"), Theme::dim()),
                 Span::raw("   "),
                 key_chip("⏎"),
@@ -1160,7 +1333,10 @@ fn link_lines(preview: &LinkPreview, w: usize) -> Vec<Line<'static>> {
         lines.extend(d);
     }
     if let Some(url) = &preview.url {
-        lines.push(Line::from(Span::styled(format!("↗ {}", text::domain(url)), Theme::faint_style())));
+        lines.push(Line::from(Span::styled(
+            format!("↗\u{a0}{}", text::domain(url)),
+            Theme::faint_style(),
+        )));
     }
     lines
 }
@@ -1183,7 +1359,7 @@ fn render_poll(poll: &Poll, w: usize) -> Vec<Line<'static>> {
                 ]));
             }
             None => lines.push(Line::from(vec![
-                Span::styled("○ ", Theme::dim()),
+                Span::styled("○\u{a0}", Theme::dim()),
                 Span::styled(label, Theme::text()),
             ])),
         }
@@ -1341,7 +1517,7 @@ fn render_notification(n: &Notification, w: usize, selected: bool) -> Rendered {
 
 fn key_chip(key: &str) -> Span<'static> {
     Span::styled(
-        format!(" {key} "),
+        format!(" {key}\u{a0}"),
         Style::default().fg(Theme::ink()).bg(Theme::wash()).add_modifier(Modifier::BOLD),
     )
 }
@@ -1357,7 +1533,7 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
     if app.signed() {
         match &app.me {
             Some(me) => lines.push(Line::from(vec![
-                Span::styled("● ", Style::default().fg(Theme::user_lane(&me.user))),
+                Span::styled("●\u{a0}", Style::default().fg(Theme::user_lane(&me.user))),
                 Span::styled(me.user.display_name().to_string(), Theme::bold()),
                 Span::styled(format!("  @{}", me.user.username), Theme::dim()),
             ])),
@@ -1385,34 +1561,35 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
             let current = app.current_lane_index();
             let picked = app.lane_pick.unwrap_or(current);
             let custom = matches!(&me.preferred_lane, Some(serde_json::Value::String(_)));
-            let mut swatches = Vec::new();
+            // Each color a tile, the one you're on underlined, the one you have ticked. Tiles are background color,
+            // so no font draws them off size or off center.
+            let mut tiles = Vec::new();
+            let mut marks = Vec::new();
             for i in 0..7usize {
-                let (color, label) = if i < 6 {
-                    (Theme::lane(i as u8), String::new())
-                } else {
-                    (Theme::lane(me.automatic_lane.unwrap_or(0)), " Automatic".to_string())
-                };
-                let selected = i == picked;
+                let color = Theme::lane(if i < 6 { i as u8 } else { me.automatic_lane.unwrap_or(0) });
                 let saved = i == current && !custom;
-                let style = if selected {
-                    Style::default().fg(color).bg(Theme::wash()).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(color)
-                };
-                swatches.push(Span::styled(if selected { "[" } else { " " }, Theme::dim()));
-                swatches.push(Span::styled(if saved { "◉" } else { "●" }, style));
-                swatches.push(Span::styled(label, if selected { Theme::bold() } else { Theme::dim() }));
-                swatches.push(Span::styled(if selected { "]" } else { " " }, Theme::dim()));
+                let tile = Style::default().fg(Theme::shell()).bg(color).add_modifier(Modifier::BOLD);
+                tiles.push(Span::styled(if saved { " ✓\u{a0}" } else { "   " }, tile));
+                let under = if i == picked { "▔▔▔" } else { "   " };
+                marks.push(Span::styled(under, Style::default().fg(Theme::ink())));
+                let label = if i == 6 { " Automatic" } else { "" };
+                let label_style = if i == picked { Theme::bold() } else { Theme::dim() };
+                tiles.push(Span::styled(format!("{label}  "), label_style));
+                marks.push(Span::raw(" ".repeat(width(label) + 2)));
             }
             if custom {
-                swatches.push(Span::styled("  custom ", Theme::dim()));
-                swatches.push(Span::styled("◉", Style::default().fg(Theme::user_lane(&me.user))));
+                tiles.push(Span::styled("custom ", Theme::dim()));
+                tiles.push(Span::styled(
+                    " ✓\u{a0}",
+                    Style::default().fg(Theme::shell()).bg(Theme::user_lane(&me.user)),
+                ));
             }
-            lines.push(Line::from(swatches));
+            lines.push(Line::from(tiles));
+            lines.push(Line::from(marks));
             let hint = if app.lane_pick.is_some_and(|p| p != current) {
-                "↵ saves it · esc keeps yours"
+                "↵\u{a0}saves it · esc keeps yours"
             } else {
-                "← → pick a lane · # any hex color"
+                "←\u{a0}→\u{a0}pick a lane · # any hex color"
             };
             lines.push(Line::from(Span::styled(hint, Theme::faint_style())));
 
@@ -1510,12 +1687,12 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
                 Theme::text(),
             ));
             lines.extend(wrap_plain(
-                "   Didn't ask? Copy the devnull:// link it was sent to (DevTools → Network shows it) and paste it.",
+                "   Didn't ask? Copy the devnull:// link it was sent to (DevTools →\u{a0}Network shows it) and paste it.",
                 w,
                 Theme::dim(),
             ));
         } else {
-            lines.extend(wrap_plain("2. Your browser is then sent to a devnull:// link, meant for the app. Copy it from the address bar (or DevTools → Network) and paste it here.", w, Theme::text()));
+            lines.extend(wrap_plain("2. Your browser is then sent to a devnull:// link, meant for the app. Copy it from the address bar (or DevTools →\u{a0}Network) and paste it here.", w, Theme::text()));
         }
         lines.push(Line::from(vec![
             Span::raw("   "),
@@ -1541,19 +1718,44 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::default());
     lines.push(section("Look"));
     lines.push(Line::default());
-    let shown = match (app.config.theme().as_str(), app.detected_light) {
-        ("auto", Some(true)) => "auto · light, like your terminal".to_string(),
-        ("auto", Some(false)) => "auto · dark, like your terminal".to_string(),
-        ("auto", None) => "auto · dark (your terminal didn't say)".to_string(),
-        _ => Theme::name(),
+    let shown = match (app.config.icons().as_str(), icons::nerd()) {
+        ("auto", true) => "auto · Nerd Font, your terminal has them",
+        ("auto", false) => "auto · plain symbols",
+        ("nerd", _) => "Nerd Font",
+        _ => "plain symbols",
     };
+    let icon = icons::get();
     lines.push(Line::from(vec![
-        key_chip("t"),
-        Span::styled("  Theme  ", Theme::text()),
+        key_chip("i"),
+        Span::styled("  Icons  ", Theme::text()),
         Span::styled(shown, Theme::link()),
-        Span::styled("  T goes back", Theme::faint_style()),
+        Span::styled(
+            format!(
+                "  {}{g}{}{g}{}{g}{}",
+                icon.log,
+                icon.notifications,
+                icon.remotes,
+                icon.profile,
+                g = icons::gap()
+            ),
+            Theme::dim(),
+        ),
     ]));
-    lines.extend(text::wrap_indented(
+    if config::THEME_PICKER {
+        lines.push(Line::default());
+        let shown = match (app.config.theme().as_str(), app.detected_light) {
+            ("auto", Some(true)) => "auto · light, like your terminal".to_string(),
+            ("auto", Some(false)) => "auto · dark, like your terminal".to_string(),
+            ("auto", None) => "auto · dark (your terminal didn't say)".to_string(),
+            _ => Theme::name(),
+        };
+        lines.push(Line::from(vec![
+            key_chip("t"),
+            Span::styled("  Theme  ", Theme::text()),
+            Span::styled(shown, Theme::link()),
+            Span::styled("  T goes back", Theme::faint_style()),
+        ]));
+        lines.extend(text::wrap_indented(
         &format!(
             "Auto follows your terminal's background. Your own themes go in {}, as TOML files like the ones in the repo's themes/ folder.",
             text::tilde(&crate::theme::custom_dir())
@@ -1562,6 +1764,7 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
         Theme::faint_style(),
         5,
     ));
+    }
     lines.push(Line::default());
     lines.push(section("Server"));
     lines.push(Line::default());
@@ -1604,7 +1807,12 @@ fn draw_right(f: &mut Frame, app: &App, area: Rect) {
         .border_type(Theme::borders())
         .border_style(Style::default().fg(Theme::hairline()))
         .render_ref(search, buf);
-    buf.set_string(x + 2, search.y + 1, "◎  Search", Theme::dim());
+    buf.set_string(
+        x + 2,
+        search.y + 1,
+        format!("{}{} Search", icons::get().search, icons::gap()),
+        Theme::dim(),
+    );
     buf.set_string(
         x + w - 4,
         search.y + 1,
@@ -1616,19 +1824,31 @@ fn draw_right(f: &mut Frame, app: &App, area: Rect) {
     match &app.me {
         Some(me) => {
             let user = &me.user;
-            let (top, bottom) = match (avatar_row(user, 4, 2, 0), avatar_row(user, 4, 2, 1)) {
-                (Some(top), Some(bottom)) => (vec![top, Span::raw(" ")], vec![bottom, Span::raw(" ")]),
-                _ => (vec![Span::styled("◉ ", Style::default().fg(Theme::user_lane(user)))], vec![]),
+            // A large name takes two rows, so the avatar grows to three to sit beside it and the handle.
+            let name = truncate(user.display_name(), (w as usize).saturating_sub(8) * 2 / 3);
+            let large = big::rows(&name, Size::Large, Theme::bold());
+            let (cols, rows) = if large.is_some() { (6, 3) } else { (4, 2) };
+            let avatar: Vec<Vec<Span>> = match (0..rows).map(|row| avatar_row(user, cols, rows, row)).collect::<Option<Vec<_>>>() {
+                Some(rows) => rows.into_iter().map(|row| vec![row, Span::raw(" ")]).collect(),
+                None => {
+                    let mut lead = vec![vec![Span::styled("⦿\u{a0}", Style::default().fg(Theme::user_lane(user)))]];
+                    lead.resize(rows as usize, vec![Span::raw("  ")]);
+                    lead
+                }
             };
-            let mut name = top;
-            name.push(Span::styled(truncate(user.display_name(), w as usize - 6), Theme::bold()));
-            buf.set_line(x, y, &Line::from(name), w);
+            let mut text: Vec<Vec<Span>> = match large {
+                Some((top, bottom, _)) => vec![vec![top], vec![bottom]],
+                None => vec![vec![Span::styled(truncate(user.display_name(), w as usize - 6), Theme::bold())]],
+            };
+            text.push(vec![
+                Span::styled("●\u{a0}", Style::default().fg(Theme::lane(1))),
+                Span::styled(format!("@{}", user.username), Theme::dim()),
+            ]);
+            for (lead, rest) in avatar.into_iter().zip(text) {
+                buf.set_line(x, y, &Line::from([lead, rest].concat()), w);
+                y += 1;
+            }
             y += 1;
-            let mut handle = bottom;
-            handle.push(Span::styled("● ", Style::default().fg(Theme::lane(1))));
-            handle.push(Span::styled(format!("@{}", user.username), Theme::dim()));
-            buf.set_line(x, y, &Line::from(handle), w);
-            y += 2;
             let mut row: Vec<Span> = Vec::new();
             for (n, label) in [
                 (user.commits_count, "commits"),
@@ -1662,7 +1882,7 @@ fn draw_right(f: &mut Frame, app: &App, area: Rect) {
                     x,
                     y,
                     &Line::from(vec![
-                        Span::styled("◍ ", Style::default().fg(Theme::lane(5))),
+                        Span::styled("⊚\u{a0}", Style::default().fg(Theme::lane(5))),
                         Span::styled(format!("{left} pastéis left today"), Theme::dim()),
                     ]),
                     w,
@@ -1753,7 +1973,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     } else if let Some((message, error, _)) = &app.toast {
         let color = if *error { Theme::destructive() } else { Theme::lane(1) };
         Line::from(vec![
-            Span::styled(if *error { " ✕ " } else { " ✓ " }, Style::default().fg(color)),
+            Span::styled(if *error { " ✕\u{a0}" } else { " ✓\u{a0}" }, Style::default().fg(color)),
             Span::styled(message.clone(), Theme::text()),
         ])
     } else if app.pending_g {
@@ -1812,7 +2032,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         let mut spans = vec![Span::raw(" ")];
         for (key, label) in hints {
             spans.push(Span::styled(key.to_string(), Theme::text()));
-            spans.push(Span::styled(format!(" {label}   "), Theme::faint_style()));
+            spans.push(Span::styled(format!("\u{a0}{label}   "), Theme::faint_style()));
         }
         Line::from(spans)
     };
@@ -1999,7 +2219,10 @@ fn draw_viewer(f: &mut Frame, viewer: &Viewer, area: Rect) {
     let caption = Line::from(vec![
         Span::styled(format!("@{}", viewer.author), Theme::bold()),
         Span::styled(format!("  {}/{}{size}", viewer.index + 1, viewer.images.len()), Theme::dim()),
-        Span::styled(if viewer.images.len() > 1 { "   ← → next" } else { "" }, Theme::faint_style()),
+        Span::styled(
+            if viewer.images.len() > 1 { "   ←\u{a0}→\u{a0}next" } else { "" },
+            Theme::faint_style(),
+        ),
         Span::styled("   w browser   esc close", Theme::faint_style()),
     ]);
     let cw = caption.width() as u16;
@@ -2119,7 +2342,7 @@ fn draw_confirm(f: &mut Frame, confirm: &Confirm, area: Rect) {
         Confirm::Delete(_) => ("Delete commit", "Delete this commit? It goes to /dev/null, for real this time."),
         Confirm::SignOut => (
             "Sign out",
-            "Sign out of this terminal? Its device key is deleted here; revoke it under Settings → Devices on the web too.",
+            "Sign out of this terminal? Its device key is deleted here; revoke it under Settings →\u{a0}Devices on the web too.",
         ),
     };
     let rect = centered(area, 56, 8);
@@ -2191,7 +2414,7 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     } else {
         Span::styled(shown, Theme::text())
     };
-    lines.push(Line::from(vec![Span::styled("› ", Theme::link()), field]));
+    lines.push(Line::from(vec![Span::styled("›\u{a0}", Theme::link()), field]));
     lines.push(Line::default());
     if let Some(error) = &input.error {
         lines.extend(wrap_plain(error, w, Style::default().fg(Theme::destructive())));
@@ -2331,7 +2554,7 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
                 break;
             }
             let line = Line::from(vec![
-                Span::styled("  ⊞ ", Style::default().fg(lane)),
+                Span::styled("  ⊞\u{a0}", Style::default().fg(lane)),
                 Span::styled(truncate(&image.name, inner.width as usize / 2), Theme::text()),
                 Span::styled(format!("  {}×{} · {}", image.width, image.height, image.size_label()), Theme::dim()),
                 Span::styled(
@@ -2434,7 +2657,7 @@ fn draw_composer(f: &mut Frame, app: &App, _center: Rect, area: Rect) {
                     .borders(Borders::ALL)
                     .border_type(Theme::borders())
                     .border_style(Style::default().fg(Theme::rail()))
-                    .title(Span::styled(" ⇥ completes ", Theme::faint_style()))
+                    .title(Span::styled(" ⇥\u{a0}completes ", Theme::faint_style()))
                     .style(Style::default().bg(Theme::popover()));
                 let inner = block.inner(rect);
                 f.render_widget(block, rect);

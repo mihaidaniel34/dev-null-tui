@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_URL: &str = "https://dev-null.sh";
 
+/// Whether Settings offers themes. Off while the redesign settles: the app follows the terminal, dark or light, and
+/// a saved theme waits for its return. DEVNULL_THEME still picks any.
+pub const THEME_PICKER: bool = false;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     /// Whose Following log to build from public data, and whose profile `g p` opens, when not signed in.
@@ -17,6 +21,9 @@ pub struct Config {
     /// "auto" (the default) follows the terminal's background; anything else is a theme's id, like "windows-98".
     #[serde(default)]
     pub theme: Option<String>,
+    /// "auto" (the default) uses Nerd Font icons where the terminal ships them; "nerd" or "plain" says which.
+    #[serde(default)]
+    pub icons: Option<String>,
 }
 
 impl Config {
@@ -25,9 +32,13 @@ impl Config {
         std::env::var("DEVNULL_THEME")
             .ok()
             .filter(|t| !t.is_empty())
-            .or_else(|| self.theme.clone())
+            .or_else(|| self.theme.clone().filter(|_| THEME_PICKER))
             .unwrap_or_else(|| "auto".into())
             .to_lowercase()
+    }
+
+    pub fn icons(&self) -> String {
+        self.icons.clone().unwrap_or_else(|| "auto".into())
     }
 }
 

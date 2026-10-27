@@ -1659,7 +1659,20 @@ impl App {
 
     fn on_settings_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Char(c @ ('t' | 'T')) => {
+            KeyCode::Char('i') => {
+                let next = match self.config.icons().as_str() {
+                    "auto" => "nerd",
+                    "nerd" => "plain",
+                    _ => "auto",
+                };
+                self.config.icons = Some(next.to_string());
+                let _ = self.config.save();
+                crate::icons::set(next);
+                if std::env::var("DEVNULL_ICONS").is_ok_and(|i| !i.is_empty()) {
+                    self.toast("DEVNULL_ICONS is set, so it wins over this setting.");
+                }
+            }
+            KeyCode::Char(c @ ('t' | 'T')) if crate::config::THEME_PICKER => {
                 // auto, then every theme, built-in and yours. T goes back.
                 let mut ids = vec!["auto".to_string()];
                 ids.extend(crate::theme::all());

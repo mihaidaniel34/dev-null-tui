@@ -42,12 +42,12 @@ fn gist(message: &Message) -> String {
         return text;
     }
     if message.voice.is_some() {
-        return "♪ voice note".into();
+        return "♪\u{a0}voice note".into();
     }
     match message.images.as_ref().map_or(0, Vec::len) {
         0 => String::new(),
-        1 => "▣ image".into(),
-        n => format!("▣ {n} images"),
+        1 => "▣\u{a0}image".into(),
+        n => format!("▣\u{a0}{n} images"),
     }
 }
 
@@ -78,11 +78,11 @@ fn draw_inbox(f: &mut Frame, app: &mut App, area: Rect) {
     let searching = !r.query.is_empty() || r.searching;
     let search = if searching {
         Line::from(vec![
-            Span::styled("   ◎  ", Theme::dim()),
+            Span::styled("   ◎\u{a0} ", Theme::dim()),
             Span::styled(r.query.clone(), Theme::text()),
         ])
     } else {
-        Line::from(vec![Span::styled("   ◎  Search names or @handles", Theme::faint_style())])
+        Line::from(vec![Span::styled("   ◎\u{a0} Search names or @handles", Theme::faint_style())])
     };
     f.buffer_mut().set_line(area.x, y, &search, area.width);
     if !searching {
@@ -202,7 +202,7 @@ fn person_row(candidate: &Candidate, w: usize, selected: bool) -> [Line<'static>
     let avatar = |row: u16| -> Span<'static> {
         avatar_row(user, 4, 2, row).unwrap_or_else(|| {
             if row == 0 {
-                Span::styled(" ●  ", Style::default().fg(lane))
+                Span::styled(" ●\u{a0} ", Style::default().fg(lane))
             } else {
                 Span::raw("    ")
             }
@@ -221,7 +221,7 @@ fn person_row(candidate: &Candidate, w: usize, selected: bool) -> [Line<'static>
     ];
     let note = match blocked {
         Some(reason) => Span::styled(truncate(reason, w.saturating_sub(10)), Style::default().fg(Theme::lane(2))),
-        None => Span::styled("⏎ to push", Theme::faint_style()),
+        None => Span::styled("⏎\u{a0}to push", Theme::faint_style()),
     };
     [
         Line::from(first),
@@ -236,7 +236,7 @@ fn inbox_row(conversation: &Conversation, w: usize, selected: bool) -> [Line<'st
     let avatar = |row: u16| -> Span<'static> {
         partner.and_then(|p| avatar_row(p, 4, 2, row)).unwrap_or_else(|| {
             if row == 0 {
-                Span::styled(" ●  ", Style::default().fg(lane))
+                Span::styled(" ●\u{a0} ", Style::default().fg(lane))
             } else {
                 Span::raw("    ")
             }
@@ -294,7 +294,7 @@ fn draw_chat(f: &mut Frame, app: &mut App, area: Rect, handle: &str) {
 
     // The header: who it is, and what they're doing.
     let name = partner.as_ref().map_or(handle.to_string(), |p| p.display_name().to_string());
-    let mut header = vec![Span::styled(if back { " ← " } else { "   " }, Theme::dim())];
+    let mut header = vec![Span::styled(if back { " ←\u{a0}" } else { "   " }, Theme::dim())];
     if let Some(p) = &partner {
         header.push(small_avatar(p));
     }
@@ -322,7 +322,7 @@ fn draw_chat(f: &mut Frame, app: &mut App, area: Rect, handle: &str) {
         } else {
             "yourself".into()
         };
-        format!("↪ Replying to {who}: {}", gist(m))
+        format!("↪\u{a0}Replying to {who}: {}", gist(m))
     });
     let composer_h: u16 = 3 + u16::from(reply.is_some());
     let thread = Rect {
@@ -398,7 +398,7 @@ fn draw_composer(f: &mut Frame, chat: &Chat, area: Rect, handle: &str, reply: Op
     let push = if chat.sending {
         " Pushing… ".to_string()
     } else {
-        " Push ⏎ ".to_string()
+        " Push ⏎\u{a0}".to_string()
     };
     let field_w = (area.width as usize).saturating_sub(5 + push.len());
     let text: String = chat.input.iter().map(|c| if *c == '\n' { '↵' } else { *c }).collect();
@@ -425,7 +425,7 @@ fn draw_composer(f: &mut Frame, chat: &Chat, area: Rect, handle: &str, reply: Op
     buf.set_line(
         area.x + 2,
         y,
-        &Line::from(vec![Span::styled("› ", prompt), field]),
+        &Line::from(vec![Span::styled("›\u{a0}", prompt), field]),
         area.width.saturating_sub(2),
     );
     if open {
@@ -584,7 +584,7 @@ fn thread_lines(chat: &Chat, partner: &User, me: &str, w: usize) -> (Vec<Line<'s
                 if !parts.is_empty() {
                     parts.push(Span::raw("  "));
                 }
-                parts.push(Span::styled("● ", Style::default().fg(Theme::user_lane(partner))));
+                parts.push(Span::styled("●\u{a0}", Style::default().fg(Theme::user_lane(partner))));
                 parts.push(Span::styled(
                     format!("pulled {}", at.with_timezone(&Local).format("%-I:%M %p")),
                     Theme::faint_style(),
@@ -641,9 +641,9 @@ fn bubble(message: &Message, partner: &User, me: &str, mine: bool, max: usize) -
         let text = if !text.is_empty() {
             text
         } else if reply.has_voice {
-            "♪ voice note".into()
+            "♪\u{a0}voice note".into()
         } else if reply.images_count > 0 {
-            "▣ image".into()
+            "▣\u{a0}image".into()
         } else {
             String::new()
         };
@@ -668,7 +668,7 @@ fn bubble(message: &Message, partner: &User, me: &str, mine: bool, max: usize) -
             Some(lines) => pictures = lines,
             None => {
                 for image in images {
-                    let name = image.url.as_ref().map(|_| "▣ image").unwrap_or("▣ image");
+                    let name = image.url.as_ref().map(|_| "▣\u{a0}image").unwrap_or("▣\u{a0}image");
                     rows.push(Line::from(Span::styled(name.to_string(), style)));
                 }
                 rows.push(Line::from(Span::styled("v views images", dim)));
@@ -676,7 +676,7 @@ fn bubble(message: &Message, partner: &User, me: &str, mine: bool, max: usize) -
         }
     }
     if message.voice.is_some() {
-        rows.push(Line::from(Span::styled("♪ voice note (play it in the app)", style)));
+        rows.push(Line::from(Span::styled("♪\u{a0}voice note (play it in the app)", style)));
     }
     if let Some(card) = message
         .link_preview
@@ -684,7 +684,7 @@ fn bubble(message: &Message, partner: &User, me: &str, mine: bool, max: usize) -
         .and_then(|p| p.title.clone().filter(|t| !t.is_empty()))
     {
         rows.push(Line::from(Span::styled(
-            format!("↗ {}", truncate(&card, max.saturating_sub(2))),
+            format!("↗\u{a0}{}", truncate(&card, max.saturating_sub(2))),
             dim,
         )));
     }
@@ -738,7 +738,7 @@ pub fn draw_picker(f: &mut Frame, app: &App, area: Rect) {
     ];
     let field_y = inner.y + lines.len() as u16;
     lines.push(Line::from(vec![
-        Span::styled("› ", Theme::link()),
+        Span::styled("›\u{a0}", Theme::link()),
         if picker.query.is_empty() {
             Span::styled("Search names or @handles", Theme::faint_style())
         } else {
