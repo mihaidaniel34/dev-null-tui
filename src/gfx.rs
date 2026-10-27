@@ -249,7 +249,7 @@ fn process(bytes: &[u8], key: &Key) -> Option<Vec<u8>> {
     let format = image::guess_format(bytes).ok()?;
     let picture = image::load_from_memory_with_format(bytes, format).ok()?;
     let out = match key.ring {
-        Some(ring) => avatar(&picture, ring),
+        Some(ring) => avatar(&picture, ring, key.cols, key.rows),
         None => photo(&picture, key),
     };
     let mut png = Vec::new();
@@ -257,9 +257,13 @@ fn process(bytes: &[u8], key: &Key) -> Option<Vec<u8>> {
     Some(png)
 }
 
-/// Cut round, inside a ring in the owner's lane color, as the web draws avatars.
-fn avatar(picture: &DynamicImage, ring: u32) -> RgbaImage {
+/// Cut round, inside a ring in the owner's lane color, as the web draws avatars. The canvas takes its cells' shape
+/// (a cell being about twice as tall as wide), with the circle in the middle, so an avatar an odd number of cells
+/// wide has a cell under its center for the rail.
+fn avatar(picture: &DynamicImage, ring: u32, cols: u16, rows: u16) -> RgbaImage {
     const SIZE: u32 = 96;
+    let canvas = (SIZE * cols as u32 / (2 * rows.max(1) as u32)).max(SIZE);
+    let left = (canvas - SIZE) as f32 / 2.0;
     let (w, h) = picture.dimensions();
     let side = w.min(h);
     let square = picture
@@ -270,8 +274,9 @@ fn avatar(picture: &DynamicImage, ring: u32) -> RgbaImage {
     let center = SIZE as f32 / 2.0;
     let (outer, ring_in, photo_out) = (center - 0.5, center - 5.0, center - 8.0);
 
-    RgbaImage::from_fn(SIZE, SIZE, |x, y| {
-        let d = ((x as f32 + 0.5 - center).powi(2) + (y as f32 + 0.5 - center).powi(2)).sqrt();
+    RgbaImage::from_fn(canvas, SIZE, |x, y| {
+        let d = ((x as f32 + 0.5 - left - center).powi(2) + (y as f32 + 0.5 - center).powi(2)).sqrt();
+        let x = (x as f32 - left).clamp(0.0, SIZE as f32 - 1.0) as u32;
         let coverage = |edge: f32| (edge - d + 0.5).clamp(0.0, 1.0);
         if d <= photo_out + 0.5 {
             let mut p = *square.get_pixel(x, y);
@@ -353,9 +358,20 @@ mod tests {
 
     #[test]
     fn avatars_are_round() {
-        let img = avatar(&DynamicImage::new_rgb8(10, 10), 0xff8a4c);
+        let img = avatar(&DynamicImage::new_rgb8(10, 10), 0xff8a4c, 4, 2);
         assert_eq!(img.get_pixel(0, 0)[3], 0);
         assert_eq!(img.get_pixel(48, 48)[3], 255);
         assert_eq!(img.get_pixel(48, 1).0[..3], [0xff, 0x8a, 0x4c]);
+    }
+
+    #[test]
+    fn odd_width_avatars_are_centered() {
+        // Five cells by two is wider than square: the circle sits in the middle, clear of both sides.
+        let img = avatar(&DynamicImage::new_rgb8(10, 10), 0xff8a4c, 5, 2);
+        assert_eq!(img.dimensions(), (120, 96));
+        assert_eq!(img.get_pixel(60, 48)[3], 255);
+        assert_eq!(img.get_pixel(5, 48)[3], 0);
+        assert_eq!(img.get_pixel(114, 48)[3], 0);
+        assert_eq!(img.get_pixel(60, 1).0[..3], [0xff, 0x8a, 0x4c]);
     }
 }

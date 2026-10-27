@@ -286,24 +286,6 @@ pub fn custom_dir() -> PathBuf {
     crate::config::dir().join("themes")
 }
 
-/// Every theme's id: the built-in ones, then yours.
-pub fn all() -> Vec<String> {
-    let mut ids: Vec<String> = BUILT_IN.iter().map(|(id, _)| id.to_string()).collect();
-    let mut custom: Vec<String> = fs::read_dir(custom_dir())
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            (path.extension()? == "toml").then(|| path.file_stem()?.to_str().map(str::to_string))?
-        })
-        .filter(|id| !ids.contains(id))
-        .collect();
-    custom.sort();
-    ids.append(&mut custom);
-    ids
-}
-
 /// A theme by its id, reading your themes folder first, so a file there can also change a built-in theme.
 pub fn load(id: &str) -> Result<Palette> {
     resolve(id, false, 0)

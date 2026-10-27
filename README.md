@@ -4,9 +4,7 @@
 
 It follows the web app's layout and keyboard shortcuts: the Following, Latest and Trending logs, the commit graph rail in each developer's lane color, threads, profiles, notifications, starred commits, Remotes (direct messages) and a composer that takes images. In kitty and Ghostty, avatars and images show up too. It's written in Rust with [ratatui](https://ratatui.rs).
 
-![devnull in kitty: the Latest log, with avatars, an image, a quoted commit and a reply branching off the rail](docs/screenshot.png)
-
-<sub>Demo data from a local mock server. The developers in it are made up.</sub>
+![devnull in Ghostty: the Latest log, each commit on the rail in its developer's lane color, from their avatar down to its actions](docs/screenshot.png)
 
 ## Install
 
@@ -46,7 +44,7 @@ You can revoke the device on the web under Settings → Devices.
 
 - **Profiles** show a year of activity as a contribution graph in the developer's lane color (or bars for a newer account), their streak, Unix rank and badges. `A` lists every achievement with its progress. `⇥` moves through Commits, Replies, Followers and Following.
 - **Notifications** filter by kind, as on the web: replies, mentions, quotes, stars, follows and moderation.
-- **Settings** (`g s`) picks your color from the six lanes, Automatic or any hex color, toggles pastéis mode, syncs your profile from GitHub, and picks a theme.
+- **Settings** (`g s`) picks your color from the six lanes, Automatic or any hex color, toggles pastéis mode, syncs your profile from GitHub, picks dark or light (`t`), and switches icons (`i`).
 - **The composer** suggests developers as you type `@`, and `⇥` completes. A draft you close is kept, even across restarts.
 - **Code blocks** are highlighted the way the web highlights them, when you're signed in.
 - **Safety:** `m` mutes and `B` blocks someone from their profile, and `!` reports a commit to the moderators.
@@ -66,17 +64,19 @@ Not in the terminal yet: orgs, voice notes, and sending images. Open those on th
 
 devnull talks to the signed API of the [/dev/null server](https://github.com/dev-null-sh/dev-null.sh), which has no published spec. [`docs/api-contract.md`](docs/api-contract.md) lists every endpoint devnull uses and the fields it reads, `scripts/check-api.sh` shows what changed in those server files since the contract was last checked, and a weekly workflow runs it. The types in `src/model.rs` ignore fields they don't know and default the ones that go missing, so most changes cost nothing.
 
-## Themes
+## Look
 
-devnull comes with the web's dark and light palettes, and Windows 98. By default it asks your terminal for its background color and picks dark or light to match. In Settings (`g s`), `t` goes through auto and every theme, and `T` goes back. `DEVNULL_THEME=windows-98` (or any theme's id) sets it from the environment.
+The layout fits the terminal. With room to spare (176 columns by 44 rows or more), the log widens and avatars grow. As the terminal narrows, or its font grows, the sidebar folds to icons before the right column goes, so the log keeps at least 72 columns.
 
-![devnull in the Windows 98 theme, in kitty: silver windows, and each commit's header drawn as a title bar](docs/windows-98.png)
+devnull uses the web's dark and light palettes. It asks your terminal for its background color to pick one, and `t` in Settings goes through auto, dark and light.
 
-![devnull in light mode, in kitty](docs/light.png)
+![devnull in light mode, in Ghostty](docs/light.png)
 
-### Making a theme
+**Icons.** In Ghostty, kitty and WezTerm, which ship the Nerd Font symbols, devnull uses the web's outline icons. Elsewhere it uses plain symbols, unless you have a Nerd Font: `i` in Settings goes through auto, Nerd Font and plain, and `DEVNULL_ICONS` sets it from the environment.
 
-A theme is a TOML file. Yours go in `themes/` in the config dir (`~/.config/devnull/themes`, or `~/Library/Application Support/devnull/themes` on macOS), and the file's name is the theme's id. A theme only sets what it changes. Everything else comes from the theme it `extends`, or from dark if it doesn't say:
+**Big text.** In kitty 0.40 or later, names, headings and the wordmark are drawn larger, with kitty's [text sizing protocol](https://sw.kovidgoyal.net/kitty/text-sizing-protocol/). devnull asks the terminal whether it can, so everywhere else text stays one size. `DEVNULL_BIG_TEXT=off` turns it off.
+
+**Other themes** are taking a break while the redesign settles, so Settings only offers dark and light. `DEVNULL_THEME` still picks one: `light`, `dark`, `windows-98`, or a TOML file of yours in `themes/` in the config dir, named after its id. [`themes/dark.toml`](themes/dark.toml) lists every color a theme can set, and a theme only needs the ones it changes:
 
 ```toml
 # ~/.config/devnull/themes/solarized.toml
@@ -88,19 +88,6 @@ shell = "#002b36"
 ink = "#93a1a1"
 primary = "#268bd2"
 ```
-
-Selecting a theme in Settings reads its file again, so you can edit a theme and press `t` to see the change. If a file has a mistake, devnull says where and falls back to dark. A file named after a built-in theme, like `dark.toml`, changes that theme.
-
-| Key | |
-|---|---|
-| `name` | What Settings calls it. |
-| `extends` | The theme to start from: `dark`, `light`, `windows-98` or one of yours. |
-| `borders` | `rounded`, `plain`, `thick` or `double`. |
-| `lanes` | The six lane colors: orange, green, purple, cyan, pink and yellow. A color a developer picked as hex stays theirs. |
-| `[colors]` | `shell` (the background), `popover`, `ink` (text), `muted`, `faint`, `hairline`, `rail`, `wash` (code, chips and inputs), `highlight` (behind the selected commit), `primary`, `on_primary`, `primary_soft`, `on_primary_soft`, `primary_muted`, `brand`, `destructive`, `star` and `code`. |
-| `[title_bar]` | Draws commit headers and popups as window title bars. `active` is a color, or two to fade between, and `active_ink` is its text. `inactive` and `inactive_ink` are for every commit but the selected one. |
-
-[`themes/`](themes) has the built-in themes, which set every key. To ship a theme with devnull, add its file there and a line to `BUILT_IN` in `src/theme.rs`.
 
 ## Images
 
@@ -170,7 +157,9 @@ The mouse wheel scrolls. Click a commit to select it, and click it again to open
 | `DEVNULL_URL` | The server. Defaults to `https://dev-null.sh`. `http://localhost:8000` works for a local checkout. |
 | `DEVNULL_CONFIG_DIR` | Where `config.json` and the device key live. Defaults to `~/.config/devnull` (`~/Library/Application Support/devnull` on macOS). |
 | `DEVNULL_IMAGES` | `off` turns avatars and images off. `on` turns them on where they aren't detected. |
-| `DEVNULL_THEME` | A theme's id, like `light`, `dark` or `windows-98`, or `auto`. Left unset, it's the theme from Settings, `auto` by default, which follows the terminal. |
+| `DEVNULL_ICONS` | `nerd` or `plain`. Left unset, it's the setting from Settings, `auto` by default, which picks Nerd Font icons in Ghostty, kitty and WezTerm. |
+| `DEVNULL_BIG_TEXT` | `off` keeps text one size. `on` draws big text without asking the terminal first. |
+| `DEVNULL_THEME` | A theme's id, like `light`, `dark` or `windows-98`. Left unset, it's the theme from Settings, `auto` by default, which follows the terminal's background. |
 
 Colors use the web's palettes. On terminals without truecolor, they're mapped to the 256-color palette.
 
