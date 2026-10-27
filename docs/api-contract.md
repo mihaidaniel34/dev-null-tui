@@ -44,7 +44,7 @@ Paths are under `/api/v1`. "Reads" lists what devnull takes from the answer.
 | `PUT /remotes/@{handle}/read` | `through` (a message id) | nothing |
 | `POST`/`DELETE /remotes/@{handle}/archive` | nothing | nothing (stash and unstash) |
 | `POST`/`DELETE /remotes/messages/{id}/reactions` | `emoji` | `reactions[]` of the message |
-| `GET /remotes/candidates` | `q` | `candidates[]`: `user`, `reason` (why they can't be messaged) |
+| `GET /remotes/candidates` | `q` | `candidates[]`: `user`, `reason` (why they can't be messaged). Used by the New remote picker and for "Start a conversation" under an inbox search |
 | `PUT /me/remote-preferences` | `from`, `pull_receipts` | nothing |
 
 A message has `id`, `user_id`, `body`, `body_segments`, `reply_to` (`user_id`, `body`, `images_count`, `has_voice`), `images[]` (`url` is signed, so it can be fetched without a signature), `voice`, `link_preview`, `reactions[]` (`user_id`, `emoji`), `event` (orgs only) and `created_at`.

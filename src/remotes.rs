@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{App, Msg, Screen, Tab, Viewer};
+use crate::app::{App, Item, Msg, Screen, Tab, Viewer};
 use crate::auth::random_hex;
 use crate::model::*;
 use crate::system;
@@ -68,6 +68,9 @@ pub struct Remotes {
     pub checked_at: Option<Instant>,
     pub unread_checked_at: Option<Instant>,
     pub search_edited: Option<Instant>,
+    /// People matching the search the user hasn't talked to yet, and what they were asked for.
+    pub suggestions: Vec<Candidate>,
+    pub suggested_for: Option<String>,
 }
 
 /// One conversation, as loaded and as being written to.
@@ -151,6 +154,11 @@ pub enum RemoteMsg {
         term: String,
         result: Result<Vec<Candidate>, String>,
     },
+    /// People for the inbox's "Start a conversation", asked while searching it.
+    Suggestions {
+        term: String,
+        result: Result<Vec<Candidate>, String>,
+    },
     Pulled,
     Unread(u64),
     Preferences {
@@ -202,6 +210,33 @@ impl Chat {
 }
 
 impl Remotes {
+    /// Who a search found that has no conversation yet. Only the Open tab offers them, as the web does.
+    pub fn visible_suggestions(&self) -> Vec<&Candidate> {
+        if self.tab != InboxTab::Open || self.query.trim().is_empty() {
+            return Vec::new();
+        }
+        self.suggestions
+            .iter()
+            .filter(|c| !self.list.iter().any(|l| l.partner.as_ref().is_some_and(|p| p.id == c.user.id)))
+            .collect()
+    }
+
+    /// Conversations, then the people offered below them.
+    pub fn rows(&self) -> usize {
+        self.list.len() + self.visible_suggestions().len()
+    }
+
+    /// The person on the selected row, a conversation's partner or a suggestion.
+    pub fn selected_person(&self) -> Option<User> {
+        match self.list.get(self.selected) {
+            Some(conversation) => conversation.partner.clone(),
+            None => self
+                .visible_suggestions()
+                .get(self.selected - self.list.len())
+                .map(|c| c.user.clone()),
+        }
+    }
+
     pub fn selected_conversation(&self) -> Option<&Conversation> {
         self.list.get(self.selected)
     }
@@ -246,7 +281,21 @@ impl App {
         r.loading = true;
         r.error = None;
         let (tab, term) = (r.tab, r.query.trim().to_string());
+        let ask = !more && tab == InboxTab::Open && !term.is_empty() && r.suggested_for.as_deref() != Some(term.as_str());
+        if term.is_empty() {
+            r.suggestions.clear();
+            r.suggested_for = None;
+        } else if ask {
+            r.suggested_for = Some(term.clone());
+        }
         let api = self.api.clone();
+        if ask {
+            let (api, term) = (api.clone(), term.clone());
+            self.spawn(async move {
+                let result = api.remote_candidates(&term).await.map_err(failure);
+                Msg::Remote(RemoteMsg::Suggestions { term, result })
+            });
+        }
         self.spawn(async move {
             let result = api.remotes(tab.slug(), &term, before.as_deref()).await.map_err(failure);
             Msg::Remote(RemoteMsg::Inbox { tab, term, more, result })
@@ -378,6 +427,11 @@ impl App {
                             .and_then(|id| chat.messages.iter().position(|m| m.id == id))
                             .unwrap_or(chat.messages.len().saturating_sub(1));
                     }
+                    Err(e) if e == "Not found." => {
+                        chat.error = Some(format!(
+                            "You can't message @{handle}. They need Remotes turned on, and usually to follow you first."
+                        ));
+                    }
                     Err(e) => chat.error = Some(e),
                 }
                 self.pull_chat(&handle);
@@ -482,6 +536,16 @@ impl App {
                         picker.error = None;
                     }
                     Err(e) => picker.error = Some(e),
+                }
+            }
+            RemoteMsg::Suggestions { term, result } => {
+                let r = &mut self.remotes;
+                if term == r.query.trim() {
+                    match result {
+                        Ok(candidates) => r.suggestions = candidates,
+                        // A search that finds no one to start with is not worth an error.
+                        Err(_) => r.suggestions.clear(),
+                    }
                 }
             }
             RemoteMsg::Pulled => {
@@ -662,7 +726,7 @@ impl App {
                 }
             }
             KeyCode::Char('a') => {
-                if let Some(partner) = self.remotes.selected_conversation().and_then(|c| c.partner.clone()) {
+                if let Some(partner) = self.remotes.selected_person() {
                     self.navigate(Screen::Profile(partner.username, Tab::Commits));
                 }
             }
@@ -680,10 +744,11 @@ impl App {
 
     fn move_inbox(&mut self, delta: isize) {
         let r = &mut self.remotes;
-        if r.list.is_empty() {
+        let rows = r.rows();
+        if rows == 0 {
             return;
         }
-        let last = r.list.len() as isize - 1;
+        let last = rows as isize - 1;
         r.selected = (r.selected as isize).saturating_add(delta).clamp(0, last) as usize;
         if r.selected + 4 >= r.list.len() {
             self.load_inbox(true);
@@ -703,16 +768,59 @@ impl App {
     }
 
     fn open_conversation(&mut self) {
-        let Some(conversation) = self.remotes.selected_conversation() else {
+        let r = &self.remotes;
+        if let Some(conversation) = r.selected_conversation() {
+            match &conversation.partner {
+                Some(partner) => {
+                    let handle = partner.username.clone();
+                    self.navigate(Screen::Remote(handle));
+                }
+                None => self.toast("Orgs aren't in the terminal yet. Open this one on the web."),
+            }
+            return;
+        }
+        // Someone the search found, who the user hasn't talked to yet.
+        let Some(candidate) = r.visible_suggestions().get(r.selected - r.list.len()).map(|c| (*c).clone()) else {
             return;
         };
-        match &conversation.partner {
-            Some(partner) => {
-                let handle = partner.username.clone();
-                self.navigate(Screen::Remote(handle));
-            }
-            None => self.toast("Orgs aren't in the terminal yet. Open this one on the web."),
+        match candidate.reason.filter(|reason| !reason.is_empty()) {
+            Some(reason) => self.error(reason),
+            None => self.navigate(Screen::Remote(candidate.user.username)),
         }
+    }
+
+    /// Starts or opens a remote with whoever is in front of the user: the person on a profile, in a list of people,
+    /// or who wrote the selected commit.
+    pub fn remote_from_here(&mut self) {
+        if matches!(self.screen(), Screen::Remotes | Screen::Remote(_)) {
+            return;
+        }
+        if !self.signed() {
+            self.error("Sign in to use Remotes: g s");
+            return;
+        }
+        if self.me.as_ref().is_some_and(|me| me.remotes.is_none()) {
+            self.error("Remotes are off. Turn them on under Settings → Profile on the web.");
+            return;
+        }
+        let selected = self.feed().and_then(|f| f.items.get(f.selected)).and_then(|item| match item {
+            Item::User(user) => Some(user.username.clone()),
+            Item::Notification(n) => n.actor.as_ref().map(|a| a.username.clone()),
+            Item::Commit(commit, _) => commit.author.as_ref().map(|a| a.username.clone()),
+        });
+        let on_profile = match self.screen() {
+            Screen::Profile(username, tab) if !tab.is_people() => Some(username.clone()),
+            _ => None,
+        };
+        let Some(handle) = on_profile.or(selected) else {
+            self.toast("Open a profile to start a remote with someone.");
+            return;
+        };
+        if self.username().as_deref() == Some(handle.as_str()) {
+            self.toast("That's you.");
+            return;
+        }
+        self.navigate(Screen::Remote(handle));
     }
 
     fn stash(&mut self, handle: String, on: bool) {

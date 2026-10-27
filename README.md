@@ -55,7 +55,8 @@ You can revoke the device on the web under Settings → Devices.
 
 Remotes, /dev/null's direct messages, are in the sidebar (`g r`) when you're signed in. The inbox has Open and Stashed tabs, a search for names and `@handles`, and a count of what you haven't pulled yet. `⏎` opens a conversation.
 
-- **In the inbox:** `n` starts a remote (pick someone, and it says why if you can't push to them yet), `x` stashes or unstashes, `/` searches, `⇥` switches tabs, `S` turns Share pulls on or off, `a` opens their profile.
+- **Starting one:** `M` on someone's profile (there's a Remote button next to Follow), on a person in a list, or on a commit's author opens a conversation with them. Searching the inbox with `/` also lists people you haven't talked to yet under "Start a conversation", and `n` opens a picker to search everyone. It says why if you can't push to someone yet.
+- **In the inbox:** `x` stashes or unstashes, `/` searches, `⇥` switches tabs, `S` turns Share pulls on or off, `a` opens their profile.
 - **In a conversation:** `j`/`k` pick a message, `i` or `⏎` writes (`⏎` pushes, `alt ⏎` adds a line, `esc` stops and keeps the draft), `r` replies to the picked message, `e` then `1`–`6` reacts, `y` copies it, `v` views its images, `x` stashes. Your messages sit on the right, theirs on the left, with reactions, the time under each run and, when you both share pulls, when they pulled.
 - It polls while it's open, so new messages and reactions appear on their own. A conversation that's closed to you (a request you haven't merged, someone who doesn't follow you, Remotes turned off) says so instead of opening the composer.
 

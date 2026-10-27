@@ -1570,6 +1570,7 @@ impl App {
             KeyCode::Char('b') => self.star(),
             KeyCode::Char('p') => self.pastel(),
             KeyCode::Char('f') => self.follow(),
+            KeyCode::Char('M') => self.remote_from_here(),
             KeyCode::Char('m') => self.ask_mute_or_block(false),
             KeyCode::Char('v') => self.view_images(),
             KeyCode::Char('A') => {

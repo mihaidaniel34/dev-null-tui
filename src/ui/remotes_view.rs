@@ -119,14 +119,15 @@ fn draw_inbox(f: &mut Frame, app: &mut App, area: Rect) {
     if let Some(notice) = &r.notice {
         return note(f.buffer_mut(), body, notice, Theme::dim());
     }
-    if r.list.is_empty() {
+    let suggestions = r.visible_suggestions();
+    if r.list.is_empty() && suggestions.is_empty() {
         let spinner = SPINNER[app.tick % SPINNER.len()];
         let text = match (&r.error, r.loaded) {
             (Some(error), _) => format!("{error}\n\nR to try again."),
             (None, false) => format!("{spinner}  Loading"),
             (None, true) if !r.query.trim().is_empty() => "Nobody matches that.".into(),
             (None, true) if r.tab == InboxTab::Stashed => "Nothing stashed. x stashes a conversation.".into(),
-            (None, true) => "No remotes yet. n starts one with someone who follows you.".into(),
+            (None, true) => "No remotes yet. n, or M on a profile, starts one with someone who follows you.".into(),
         };
         let style = if r.error.is_some() {
             Style::default().fg(Theme::destructive())
@@ -136,28 +137,96 @@ fn draw_inbox(f: &mut Frame, app: &mut App, area: Rect) {
         return note(f.buffer_mut(), body, &text, style);
     }
 
-    const ROW: u16 = 3;
-    let visible = (body.height / ROW).max(1) as usize;
-    let scroll = if r.selected < r.scroll {
-        r.selected
-    } else if r.selected >= r.scroll + visible {
-        r.selected + 1 - visible
-    } else {
-        r.scroll
-    };
+    // Conversations, then what a search found of people to start one with. Each has the row that selects it, if any.
+    enum Entry<'a> {
+        Conversation(&'a Conversation),
+        Heading,
+        Person(&'a Candidate),
+    }
+    let mut entries: Vec<(Entry, Option<usize>, u16)> = r
+        .list
+        .iter()
+        .enumerate()
+        .map(|(n, c)| (Entry::Conversation(c), Some(n), 3))
+        .collect();
+    if !suggestions.is_empty() {
+        entries.push((Entry::Heading, None, 2));
+        for (n, candidate) in suggestions.into_iter().enumerate() {
+            entries.push((Entry::Person(candidate), Some(r.list.len() + n), 3));
+        }
+    }
 
-    for (n, conversation) in r.list.iter().enumerate().skip(scroll).take(visible) {
-        let top = body.y + (n - scroll) as u16 * ROW;
-        let selected = n == r.selected;
+    let selected_entry = entries.iter().position(|e| e.1 == Some(r.selected)).unwrap_or(0);
+    let mut scroll = r.scroll.min(selected_entry);
+    if scroll > 0 && matches!(entries[selected_entry.saturating_sub(1)].0, Entry::Heading) && selected_entry - 1 < scroll {
+        scroll = selected_entry - 1;
+    }
+    while scroll < selected_entry && entries[scroll..=selected_entry].iter().map(|e| e.2).sum::<u16>() > body.height {
+        scroll += 1;
+    }
+
+    let mut top = body.y;
+    for (entry, row, height) in entries.iter().skip(scroll) {
+        if top + height > body.y + body.height + 1 {
+            break;
+        }
+        let selected = *row == Some(r.selected);
         if selected {
             f.buffer_mut()
                 .set_style(Rect { y: top, height: 2, ..body }, Style::default().bg(Theme::wash()));
         }
-        let [first, second] = inbox_row(conversation, body.width as usize, selected);
-        f.buffer_mut().set_line(body.x, top, &first, body.width);
-        f.buffer_mut().set_line(body.x, top + 1, &second, body.width);
+        match entry {
+            Entry::Conversation(conversation) => {
+                let [first, second] = inbox_row(conversation, body.width as usize, selected);
+                f.buffer_mut().set_line(body.x, top, &first, body.width);
+                f.buffer_mut().set_line(body.x, top + 1, &second, body.width);
+            }
+            Entry::Heading => {
+                f.buffer_mut().set_string(body.x + 3, top, "Start a conversation", Theme::dim());
+            }
+            Entry::Person(candidate) => {
+                let [first, second] = person_row(candidate, body.width as usize, selected);
+                f.buffer_mut().set_line(body.x, top, &first, body.width);
+                f.buffer_mut().set_line(body.x, top + 1, &second, body.width);
+            }
+        }
+        top += height;
     }
     app.remotes.scroll = scroll;
+}
+
+/// Someone a search found: who they are, and why they can't be messaged if they can't.
+fn person_row(candidate: &Candidate, w: usize, selected: bool) -> [Line<'static>; 2] {
+    let user = &candidate.user;
+    let lane = Theme::user_lane(user);
+    let avatar = |row: u16| -> Span<'static> {
+        avatar_row(user, 4, 2, row).unwrap_or_else(|| {
+            if row == 0 {
+                Span::styled(" ●  ", Style::default().fg(lane))
+            } else {
+                Span::raw("    ")
+            }
+        })
+    };
+    let blocked = candidate.reason.as_deref().filter(|r| !r.is_empty());
+    let name = truncate(user.display_name(), w.saturating_sub(10));
+    let handle = truncate(&format!(" @{}", user.username), w.saturating_sub(10 + width(&name)));
+    let first = vec![
+        bar(selected),
+        Span::raw(" "),
+        avatar(0),
+        Span::raw(" "),
+        Span::styled(name, if blocked.is_some() { Theme::dim() } else { Theme::bold() }),
+        Span::styled(handle, Theme::faint_style()),
+    ];
+    let note = match blocked {
+        Some(reason) => Span::styled(truncate(reason, w.saturating_sub(10)), Style::default().fg(Theme::lane(2))),
+        None => Span::styled("⏎ to push", Theme::faint_style()),
+    };
+    [
+        Line::from(first),
+        Line::from(vec![bar(selected), Span::raw(" "), avatar(1), Span::raw(" "), note]),
+    ]
 }
 
 /// A conversation's two lines: who and when, then the last message and whether there is more to pull.
@@ -841,5 +910,57 @@ mod tests {
         assert!(shown.contains("you: ok i tested it"));
         assert!(shown.contains(" 3 "));
         assert!(shown.contains("Stashed"));
+    }
+
+    #[tokio::test]
+    async fn a_search_offers_people_without_a_conversation_yet() {
+        let mut app = app();
+        app.remotes.loaded = true;
+        app.remotes.query = "j3ff".into();
+        app.remotes.list = vec![Conversation {
+            id: "a".into(),
+            partner: Some(user("2", "petox03", "Alberto Sosa")),
+            ..Default::default()
+        }];
+        app.remotes.suggestions = vec![
+            // Already in the list, so not offered again.
+            Candidate {
+                user: user("2", "petox03", "Alberto Sosa"),
+                reason: None,
+            },
+            Candidate {
+                user: user("5", "J3ffJessie", "J3ffJessie"),
+                reason: None,
+            },
+            Candidate {
+                user: user("6", "quiet", "Quiet One"),
+                reason: Some("Doesn't follow you.".into()),
+            },
+        ];
+        app.stack = vec![Screen::Remotes];
+        assert_eq!(app.remotes.rows(), 3);
+
+        app.remotes.selected = 1;
+        assert_eq!(app.remotes.selected_person().unwrap().username, "J3ffJessie");
+        let shown = screenshot(&mut app, 110, 30);
+        println!("{shown}");
+        assert!(shown.contains("Start a conversation"));
+        assert!(shown.contains("J3ffJessie @J3ffJessie"));
+        assert!(shown.contains("Doesn't follow you."));
+        assert_eq!(shown.matches("@petox03").count(), 1);
+
+        // Nobody on the Stashed tab: a conversation can only be started from Open.
+        app.remotes.tab = InboxTab::Stashed;
+        assert_eq!(app.remotes.rows(), 1);
+    }
+
+    #[tokio::test]
+    async fn m_on_a_profile_needs_remotes() {
+        let mut app = app();
+        app.stack = vec![Screen::Profile("someone".into(), crate::app::Tab::Commits)];
+        app.remote_from_here();
+        // Not signed in here, so it says so rather than opening anything.
+        assert!(matches!(app.screen(), Screen::Profile(..)));
+        assert!(app.toast.as_ref().is_some_and(|(m, error, _)| *error && m.contains("Sign in")));
     }
 }

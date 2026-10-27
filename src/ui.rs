@@ -445,6 +445,10 @@ fn draw_profile_card(buf: &mut Buffer, app: &App, area: Rect, profile: &Profile)
             },
         ));
     }
+    if !mine && app.me.as_ref().is_some_and(|me| me.remotes.is_some()) {
+        counts.push(Span::raw(" "));
+        counts.push(Span::styled(" Remote · M ", Style::default().fg(Theme::ink()).bg(Theme::wash())));
+    }
     lines.push(Line::from(counts));
 
     // Activity, streaks and standing, when there's room for them above the commits.
@@ -1790,6 +1794,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
                 ("j/k", "move"),
                 ("⏎", "open"),
                 ("f", "follow"),
+                ("M", "remote"),
                 ("m", "mute"),
                 ("⇥", "tabs"),
                 ("esc", "back"),
@@ -1890,6 +1895,7 @@ pub const TERMINAL_SHORTCUTS: &[(&str, &[&str])] = &[
     ("Report a commit", &["!"]),
     ("Delete your commit", &["D"]),
     ("Follow or unfollow", &["f"]),
+    ("Start a remote (on a profile)", &["M"]),
     ("Mute / block (on a profile)", &["m", "B"]),
     ("Achievements (on a profile)", &["A"]),
     ("Next tab or filter", &["⇥"]),
